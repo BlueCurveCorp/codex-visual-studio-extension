@@ -2,7 +2,9 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+
 using CodexVsix.Services;
+
 using Microsoft.VisualStudio.Shell;
 
 namespace CodexVsix;
@@ -11,22 +13,22 @@ public sealed class CodexToolWindow : ToolWindowPane
 {
     public CodexToolWindow() : base(null)
     {
-        Caption = "Codex";
+        this.Caption = "Codex";
 
         try
         {
-            Content = new CodexToolWindowControl();
+            this.Content = new CodexToolWindowControl();
         }
         catch (Exception ex)
         {
-            ActivityLog.TryLogError("CodexVsix", new LocalizationService().ToolWindowInitializeLogMessage + Environment.NewLine + ex);
-            Content = CreateErrorView(ex);
+            _ = ActivityLog.TryLogError("CodexVsix", new LocalizationService().ToolWindowInitializeLogMessage + Environment.NewLine + ex);
+            this.Content = CreateErrorView(ex);
         }
     }
 
     private static FrameworkElement CreateErrorView(Exception ex)
     {
-        var localization = new LocalizationService();
+        LocalizationService localization = new();
         return new Border
         {
             Padding = new Thickness(16),

@@ -26,8 +26,8 @@ public sealed class RecentHistoryMaxHeightConverter : IMultiValueConverter
 
         // The history card lives between the top toolbar and the composer.
         // Reserve card chrome + a visual gap so it never touches or slips under the composer.
-        var availableBetweenToolbarAndComposer = contentHeight - composerHeight - toolbarHeight - 20d;
-        var maxListHeight = availableBetweenToolbarAndComposer - 108d;
+        double availableBetweenToolbarAndComposer = contentHeight - composerHeight - toolbarHeight - 20d;
+        double maxListHeight = availableBetweenToolbarAndComposer - 108d;
         return Math.Max(140d, maxListHeight);
     }
 

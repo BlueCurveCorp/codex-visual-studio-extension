@@ -9,28 +9,28 @@ public partial class UserInputPromptWindow : Window
 {
     public UserInputPromptWindow()
     {
-        InitializeComponent();
-        Loaded += OnLoaded;
+        this.InitializeComponent();
+        Loaded += this.OnLoaded;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        var firstInput = FindFirstInput(this);
+        Control? firstInput = FindFirstInput(this);
         if (firstInput is null)
         {
             return;
         }
 
-        firstInput.Focus();
-        Keyboard.Focus(firstInput);
+        _ = firstInput.Focus();
+        _ = Keyboard.Focus(firstInput);
     }
 
     private static Control? FindFirstInput(DependencyObject parent)
     {
-        var childCount = VisualTreeHelper.GetChildrenCount(parent);
-        for (var index = 0; index < childCount; index++)
+        int childCount = VisualTreeHelper.GetChildrenCount(parent);
+        for (int index = 0; index < childCount; index++)
         {
-            var child = VisualTreeHelper.GetChild(parent, index);
+            DependencyObject child = VisualTreeHelper.GetChild(parent, index);
             if (child is Control control
                 && control.IsVisible
                 && control.IsEnabled
@@ -39,7 +39,7 @@ public partial class UserInputPromptWindow : Window
                 return control;
             }
 
-            var nested = FindFirstInput(child);
+            Control? nested = FindFirstInput(child);
             if (nested is not null)
             {
                 return nested;

@@ -9,8 +9,8 @@ public sealed class StringsEqualToVisibilityConverter : IMultiValueConverter
 {
     public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
     {
-        var left = values.Length > 0 ? values[0]?.ToString() ?? string.Empty : string.Empty;
-        var right = values.Length > 1 ? values[1]?.ToString() ?? string.Empty : string.Empty;
+        string left = values.Length > 0 ? values[0]?.ToString() ?? string.Empty : string.Empty;
+        string right = values.Length > 1 ? values[1]?.ToString() ?? string.Empty : string.Empty;
         return string.Equals(left, right, StringComparison.OrdinalIgnoreCase)
             ? Visibility.Visible
             : Visibility.Collapsed;

@@ -1,11 +1,12 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+
 using EnvDTE;
+
 using Microsoft.VisualStudio.Shell;
 
 namespace CodexVsix.Services;
@@ -15,7 +16,7 @@ public sealed class SolutionContextService
     public string? TryGetBestWorkspaceDirectory()
     {
         ThreadHelper.ThrowIfNotOnUIThread();
-        return TryGetSolutionDirectory()
+        return this.TryGetSolutionDirectory()
             ?? TryGetActiveProjectDirectory()
             ?? TryGetFirstProjectDirectory()
             ?? TryGetActiveDocumentDirectory();
@@ -24,8 +25,8 @@ public sealed class SolutionContextService
     public string? TryGetSolutionDirectory()
     {
         ThreadHelper.ThrowIfNotOnUIThread();
-        var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
-        var solutionPath = dte?.Solution?.FullName;
+        DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+        string? solutionPath = dte?.Solution?.FullName;
         if (!string.IsNullOrWhiteSpace(solutionPath) && File.Exists(solutionPath))
         {
             return Path.GetDirectoryName(solutionPath);
@@ -37,40 +38,40 @@ public sealed class SolutionContextService
     public string GetBestWorkingDirectory()
     {
         ThreadHelper.ThrowIfNotOnUIThread();
-        return TryGetBestWorkspaceDirectory() ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return this.TryGetBestWorkspaceDirectory() ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     }
 
     public string BuildIdeContextSummary(string workingDirectory)
     {
         ThreadHelper.ThrowIfNotOnUIThread();
-        var localization = new LocalizationService();
+        LocalizationService localization = new();
 
-        var sections = new List<string>();
-        var solutionDirectory = TryGetSolutionDirectory();
+        List<string> sections = [];
+        string? solutionDirectory = this.TryGetSolutionDirectory();
         if (!string.IsNullOrWhiteSpace(solutionDirectory))
         {
             sections.Add(localization.IdeContextSolutionLabel + " " + FormatPath(workingDirectory, solutionDirectory));
         }
 
-        var activeDocument = TryGetActiveDocumentPath();
+        string? activeDocument = TryGetActiveDocumentPath();
         if (!string.IsNullOrWhiteSpace(activeDocument))
         {
             sections.Add(localization.IdeContextActiveDocumentLabel + " " + FormatPath(workingDirectory, activeDocument));
         }
 
-        var selectedItems = GetSelectedPaths(workingDirectory);
+        IReadOnlyList<string> selectedItems = GetSelectedPaths(workingDirectory);
         if (selectedItems.Count > 0)
         {
             sections.Add(localization.IdeContextSelectedItemsLabel + " " + string.Join(", ", selectedItems.Take(5)));
         }
 
-        var openDocuments = GetOpenDocumentPaths(workingDirectory);
+        IReadOnlyList<string> openDocuments = GetOpenDocumentPaths(workingDirectory);
         if (openDocuments.Count > 0)
         {
             sections.Add(localization.IdeContextOpenFilesLabel + " " + string.Join(", ", openDocuments.Take(6)));
         }
 
-        var selectionSnippet = TryGetActiveSelectionSnippet();
+        string selectionSnippet = TryGetActiveSelectionSnippet();
         if (!string.IsNullOrWhiteSpace(selectionSnippet))
         {
             sections.Add(localization.IdeContextSelectionLabel + Environment.NewLine + selectionSnippet);
@@ -82,14 +83,14 @@ public sealed class SolutionContextService
     public IReadOnlyList<string> FindSolutionFiles(string search)
     {
         ThreadHelper.ThrowIfNotOnUIThread();
-        var root = GetBestWorkingDirectory();
+        string root = this.GetBestWorkingDirectory();
         if (!Directory.Exists(root))
         {
             return Array.Empty<string>();
         }
 
-        var normalized = (search ?? string.Empty).Trim().Replace('\\', '/');
-        var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+        string normalized = (search ?? string.Empty).Trim().Replace('\\', '/');
+        List<string> files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .Where(f => !IsIgnoredPath(f))
             .Select(f => MakeRelative(root, f))
             .Where(f => string.IsNullOrWhiteSpace(normalized) || f.IndexOf(normalized, StringComparison.OrdinalIgnoreCase) >= 0)
@@ -104,14 +105,14 @@ public sealed class SolutionContextService
     public IReadOnlyList<string> GetSolutionFilePaths()
     {
         ThreadHelper.ThrowIfNotOnUIThread();
-        var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+        DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
         if (dte?.Solution?.Projects is null)
         {
             return Array.Empty<string>();
         }
 
-        var files = new List<string>();
-        var visitedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        List<string> files = [];
+        HashSet<string> visitedProjects = new(StringComparer.OrdinalIgnoreCase);
 
         try
         {
@@ -132,7 +133,7 @@ public sealed class SolutionContextService
 
     public string GetCodexConfigPath()
     {
-        return Path.Combine(GetCodexHomeDirectory(), "config.toml");
+        return Path.Combine(this.GetCodexHomeDirectory(), "config.toml");
     }
 
     public string GetCodexHomeDirectory()
@@ -142,19 +143,19 @@ public sealed class SolutionContextService
 
     public string GetCodexSkillsDirectory()
     {
-        return Path.Combine(GetCodexHomeDirectory(), "skills");
+        return Path.Combine(this.GetCodexHomeDirectory(), "skills");
     }
 
     public void OpenCodexConfig()
     {
-        var path = GetCodexConfigPath();
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        string path = this.GetCodexConfigPath();
+        _ = Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         if (!File.Exists(path))
         {
             File.WriteAllText(path, "model = \"gpt-5.4\"" + Environment.NewLine);
         }
 
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        _ = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
             FileName = path,
             UseShellExecute = true
@@ -163,9 +164,9 @@ public sealed class SolutionContextService
 
     public void OpenCodexSkillsDirectory()
     {
-        var path = GetCodexSkillsDirectory();
-        Directory.CreateDirectory(path);
-        OpenPath(path);
+        string path = this.GetCodexSkillsDirectory();
+        _ = Directory.CreateDirectory(path);
+        this.OpenPath(path);
     }
 
     public void OpenPath(string path)
@@ -175,7 +176,7 @@ public sealed class SolutionContextService
             return;
         }
 
-        System.Diagnostics.Process.Start(new ProcessStartInfo
+        _ = System.Diagnostics.Process.Start(new ProcessStartInfo
         {
             FileName = path,
             UseShellExecute = true
@@ -228,13 +229,13 @@ public sealed class SolutionContextService
 
         try
         {
-            var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+            DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
             if (dte?.ItemOperations is null)
             {
                 return false;
             }
 
-            var window = dte.ItemOperations.OpenFile(path, EnvDTE.Constants.vsViewKindTextView);
+            Window window = dte.ItemOperations.OpenFile(path, EnvDTE.Constants.vsViewKindTextView);
             window?.Activate();
             return true;
         }
@@ -250,9 +251,8 @@ public sealed class SolutionContextService
 
         try
         {
-            var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
-            var selection = dte?.ActiveDocument?.Selection as TextSelection;
-            if (selection is null)
+            DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+            if (dte?.ActiveDocument?.Selection is not TextSelection selection)
             {
                 return;
             }
@@ -278,7 +278,7 @@ public sealed class SolutionContextService
             return;
         }
 
-        System.Diagnostics.Process.Start(new ProcessStartInfo
+        _ = System.Diagnostics.Process.Start(new ProcessStartInfo
         {
             FileName = url,
             UseShellExecute = true
@@ -287,11 +287,11 @@ public sealed class SolutionContextService
 
     public string CreateSkillTemplate(string skillName, string description)
     {
-        var normalizedSkillName = NormalizeSkillName(skillName);
-        var skillDirectory = Path.Combine(GetCodexSkillsDirectory(), normalizedSkillName);
-        Directory.CreateDirectory(skillDirectory);
+        string normalizedSkillName = NormalizeSkillName(skillName);
+        string skillDirectory = Path.Combine(this.GetCodexSkillsDirectory(), normalizedSkillName);
+        _ = Directory.CreateDirectory(skillDirectory);
 
-        var skillFile = Path.Combine(skillDirectory, "SKILL.md");
+        string skillFile = Path.Combine(skillDirectory, "SKILL.md");
         if (!File.Exists(skillFile))
         {
             File.WriteAllText(
@@ -310,7 +310,7 @@ public sealed class SolutionContextService
             return false;
         }
 
-        var trimmed = skillName.Trim();
+        string trimmed = skillName.Trim();
         if (!char.IsLetterOrDigit(trimmed[0]))
         {
             return false;
@@ -321,7 +321,7 @@ public sealed class SolutionContextService
 
     private static string NormalizeSkillName(string skillName)
     {
-        var trimmed = (skillName ?? string.Empty).Trim();
+        string trimmed = (skillName ?? string.Empty).Trim();
         if (!IsValidSkillName(trimmed))
         {
             throw new ArgumentException(new LocalizationService().InvalidSkillNameMessage, nameof(skillName));
@@ -332,8 +332,8 @@ public sealed class SolutionContextService
 
     private static string BuildSkillTemplate(string skillName, string description)
     {
-        var localization = new LocalizationService();
-        var summary = string.IsNullOrWhiteSpace(description)
+        LocalizationService localization = new();
+        string summary = string.IsNullOrWhiteSpace(description)
             ? localization.SkillTemplateSummary
             : description.Trim();
 
@@ -352,7 +352,7 @@ public sealed class SolutionContextService
 
     private static bool IsIgnoredPath(string fullPath)
     {
-        var p = fullPath.Replace('\\', '/');
+        string p = fullPath.Replace('\\', '/');
         return p.Contains("/.git/") || p.Contains("/bin/") || p.Contains("/obj/") || p.Contains("/node_modules/") || p.Contains("/.vs/");
     }
 
@@ -362,17 +362,17 @@ public sealed class SolutionContextService
 
         try
         {
-            var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+            DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
             if (dte?.ActiveSolutionProjects is not Array activeProjects)
             {
                 return null;
             }
 
-            foreach (var entry in activeProjects)
+            foreach (object? entry in activeProjects)
             {
                 if (entry is Project project)
                 {
-                    var directory = TryGetProjectDirectory(project);
+                    string? directory = TryGetProjectDirectory(project);
                     if (!string.IsNullOrWhiteSpace(directory))
                     {
                         return directory;
@@ -393,8 +393,8 @@ public sealed class SolutionContextService
 
         try
         {
-            var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
-            var projects = dte?.Solution?.Projects;
+            DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+            Projects? projects = dte?.Solution?.Projects;
             if (projects is null)
             {
                 return null;
@@ -402,7 +402,7 @@ public sealed class SolutionContextService
 
             foreach (Project project in projects)
             {
-                var directory = TryGetProjectDirectory(project);
+                string? directory = TryGetProjectDirectory(project);
                 if (!string.IsNullOrWhiteSpace(directory))
                 {
                     return directory;
@@ -422,8 +422,8 @@ public sealed class SolutionContextService
 
         try
         {
-            var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
-            var fullName = dte?.ActiveDocument?.FullName;
+            DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+            string? fullName = dte?.ActiveDocument?.FullName;
             if (!string.IsNullOrWhiteSpace(fullName) && File.Exists(fullName))
             {
                 return Path.GetDirectoryName(fullName);
@@ -442,8 +442,8 @@ public sealed class SolutionContextService
 
         try
         {
-            var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
-            var fullName = dte?.ActiveDocument?.FullName;
+            DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+            string? fullName = dte?.ActiveDocument?.FullName;
             return !string.IsNullOrWhiteSpace(fullName) && File.Exists(fullName)
                 ? fullName
                 : null;
@@ -465,7 +465,7 @@ public sealed class SolutionContextService
 
         try
         {
-            var fullName = project.FullName;
+            string fullName = project.FullName;
             if (!string.IsNullOrWhiteSpace(fullName))
             {
                 if (File.Exists(fullName))
@@ -485,7 +485,7 @@ public sealed class SolutionContextService
 
         try
         {
-            var fullPath = project.Properties?.Item("FullPath")?.Value as string;
+            string? fullPath = project.Properties?.Item("FullPath")?.Value as string;
             if (!string.IsNullOrWhiteSpace(fullPath) && Directory.Exists(fullPath))
             {
                 return fullPath;
@@ -504,7 +504,7 @@ public sealed class SolutionContextService
 
             foreach (ProjectItem item in project.ProjectItems)
             {
-                var nested = TryGetProjectDirectory(item.SubProject);
+                string? nested = TryGetProjectDirectory(item.SubProject);
                 if (!string.IsNullOrWhiteSpace(nested))
                 {
                     return nested;
@@ -526,10 +526,10 @@ public sealed class SolutionContextService
             return;
         }
 
-        var projectKey = TryGetProjectKey(project);
+        string? projectKey = TryGetProjectKey(project);
         if (!string.IsNullOrWhiteSpace(projectKey))
         {
-            var key = projectKey!;
+            string key = projectKey!;
             if (!visitedProjects.Add(key))
             {
                 return;
@@ -633,7 +633,7 @@ public sealed class SolutionContextService
             return;
         }
 
-        var filePath = path!;
+        string filePath = path!;
         if (File.Exists(filePath))
         {
             files.Add(filePath);
@@ -642,7 +642,7 @@ public sealed class SolutionContextService
 
     private static string MakeRelative(string root, string file)
     {
-        var relative = file.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string relative = file.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         return relative.Replace('\\', '/');
     }
 
@@ -663,19 +663,23 @@ public sealed class SolutionContextService
 
         try
         {
-            var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+            DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
             if (dte?.Documents is null)
             {
                 return Array.Empty<string>();
             }
 
-            return dte.Documents
-                .Cast<Document>()
-                .Select(document => document.FullName)
-                .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
-                .Select(path => FormatPath(workingDirectory, path!))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            List<string> paths = [];
+            foreach (Document document in dte.Documents)
+            {
+                string documentPath = document.FullName;
+                if (!string.IsNullOrWhiteSpace(documentPath) && File.Exists(documentPath))
+                {
+                    paths.Add(FormatPath(workingDirectory, documentPath));
+                }
+            }
+
+            return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
         catch
         {
@@ -689,16 +693,16 @@ public sealed class SolutionContextService
 
         try
         {
-            var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+            DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
             if (dte?.SelectedItems is null)
             {
                 return Array.Empty<string>();
             }
 
-            var items = new List<string>();
+            List<string> items = [];
             foreach (SelectedItem selectedItem in dte.SelectedItems)
             {
-                var path = selectedItem.ProjectItem?.FileNames[1]
+                string? path = selectedItem.ProjectItem?.FileNames[1]
                     ?? selectedItem.Project?.FullName;
                 if (string.IsNullOrWhiteSpace(path))
                 {
@@ -722,15 +726,15 @@ public sealed class SolutionContextService
 
         try
         {
-            var dte = Package.GetGlobalService(typeof(DTE)) as DTE;
-            var textSelection = dte?.ActiveDocument?.Selection as TextSelection;
-            var selectedText = textSelection?.Text;
+            DTE? dte = Package.GetGlobalService(typeof(DTE)) as DTE;
+            TextSelection? textSelection = dte?.ActiveDocument?.Selection as TextSelection;
+            string? selectedText = textSelection?.Text;
             if (string.IsNullOrWhiteSpace(selectedText))
             {
                 return string.Empty;
             }
 
-            var normalized = selectedText.Replace("\r\n", "\n").Trim();
+            string normalized = selectedText.Replace("\r\n", "\n").Trim();
             const int maxLength = 900;
             if (normalized.Length <= maxLength)
             {
@@ -752,7 +756,7 @@ public sealed class SolutionContextService
             return int.MaxValue / 2;
         }
 
-        var idx = file.IndexOf(search, StringComparison.OrdinalIgnoreCase);
-        return idx < 0 ? int.MaxValue : idx * 10 + file.Length;
+        int idx = file.IndexOf(search, StringComparison.OrdinalIgnoreCase);
+        return idx < 0 ? int.MaxValue : (idx * 10) + file.Length;
     }
 }

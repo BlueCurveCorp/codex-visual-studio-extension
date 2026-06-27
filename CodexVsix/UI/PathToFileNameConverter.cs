@@ -9,7 +9,7 @@ public sealed class PathToFileNameConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
-        var text = value as string;
+        string? text = value as string;
         if (string.IsNullOrWhiteSpace(text))
         {
             return string.Empty;

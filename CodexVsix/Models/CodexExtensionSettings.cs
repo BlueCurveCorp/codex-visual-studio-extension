@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+
 using Newtonsoft.Json;
 
 namespace CodexVsix.Models;
@@ -23,13 +24,13 @@ public sealed class CodexExtensionSettings
 
     [JsonIgnore]
     public string LastThreadWorkingDirectory { get; set; } = "";
-    public List<string> PromptHistory { get; set; } = new();
-    public List<string> CustomModels { get; set; } = new();
-    public List<string> CustomReasoningEfforts { get; set; } = new();
-    public List<string> CustomVerbosityOptions { get; set; } = new();
-    public List<string> CustomServiceTiers { get; set; } = new();
-    public List<CodexManagedMcpServer> ManagedMcpServers { get; set; } = new();
-    public List<string> PreferredMcpServers { get; set; } = new();
+    public List<string> PromptHistory { get; set; } = [];
+    public List<string> CustomModels { get; set; } = [];
+    public List<string> CustomReasoningEfforts { get; set; } = [];
+    public List<string> CustomVerbosityOptions { get; set; } = [];
+    public List<string> CustomServiceTiers { get; set; } = [];
+    public List<CodexManagedMcpServer> ManagedMcpServers { get; set; } = [];
+    public List<string> PreferredMcpServers { get; set; } = [];
     public bool StreamOutput { get; set; } = true;
     public bool ReuseSession { get; set; } = false;
     public bool AutoApprovePowerShell { get; set; } = false;

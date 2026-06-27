@@ -14,7 +14,7 @@ public sealed class ResponsivePanelWidthConverter : IValueConverter
         }
 
         // Keep the floating panel close to full width without colliding with the outer margins.
-        var computedWidth = actualWidth - 48d;
+        double computedWidth = actualWidth - 48d;
         return Math.Max(320d, Math.Min(computedWidth, 820d));
     }
 

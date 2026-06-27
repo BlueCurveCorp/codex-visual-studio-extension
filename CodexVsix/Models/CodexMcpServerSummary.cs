@@ -5,8 +5,6 @@ namespace CodexVsix.Models;
 
 public sealed class CodexMcpServerSummary : INotifyPropertyChanged
 {
-    private bool _isShortcutSelected;
-
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public string Name { get; set; } = string.Empty;
@@ -17,16 +15,16 @@ public sealed class CodexMcpServerSummary : INotifyPropertyChanged
 
     public bool IsShortcutSelected
     {
-        get => _isShortcutSelected;
+        get;
         set
         {
-            if (_isShortcutSelected == value)
+            if (field == value)
             {
                 return;
             }
 
-            _isShortcutSelected = value;
-            OnPropertyChanged();
+            field = value;
+            this.OnPropertyChanged();
         }
     }
 
@@ -35,5 +33,5 @@ public sealed class CodexMcpServerSummary : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 
-    public override string ToString() => Name;
+    public override string ToString() => this.Name;
 }

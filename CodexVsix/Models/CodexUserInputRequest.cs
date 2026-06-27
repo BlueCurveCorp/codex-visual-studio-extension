@@ -10,5 +10,5 @@ public sealed class CodexUserInputRequest
 
     public string ItemId { get; set; } = string.Empty;
 
-    public IReadOnlyList<CodexUserInputQuestion> Questions { get; set; } = new List<CodexUserInputQuestion>();
+    public IReadOnlyList<CodexUserInputQuestion> Questions { get; set; } = [];
 }

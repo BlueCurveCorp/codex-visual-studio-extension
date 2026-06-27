@@ -16,5 +16,5 @@ public sealed class ApprovalPromptViewModel
 
     public string? GrantRoot { get; set; }
 
-    public ObservableCollection<ApprovalOptionViewModel> Options { get; } = new();
+    public ObservableCollection<ApprovalOptionViewModel> Options { get; } = [];
 }

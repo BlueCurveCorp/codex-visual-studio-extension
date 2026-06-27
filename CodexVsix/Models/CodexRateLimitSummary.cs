@@ -8,7 +8,7 @@ public sealed class CodexRateLimitSummary
 {
     public IReadOnlyList<CodexRateLimitWindowSummary> Entries { get; set; } = Array.Empty<CodexRateLimitWindowSummary>();
 
-    public bool HasAnyData => Entries.Any(entry => entry.HasData);
+    public bool HasAnyData => this.Entries.Any(entry => entry.HasData);
 }
 
 public sealed class CodexRateLimitWindowSummary
@@ -17,5 +17,5 @@ public sealed class CodexRateLimitWindowSummary
 
     public string Detail { get; set; } = string.Empty;
 
-    public bool HasData => !string.IsNullOrWhiteSpace(Title) || !string.IsNullOrWhiteSpace(Detail);
+    public bool HasData => !string.IsNullOrWhiteSpace(this.Title) || !string.IsNullOrWhiteSpace(this.Detail);
 }

@@ -2,7 +2,6 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Windows.Data;
-using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 namespace CodexVsix.UI;
@@ -18,7 +17,7 @@ public sealed class FilePathToImageSourceConverter : IValueConverter
 
         try
         {
-            var image = new BitmapImage();
+            BitmapImage image = new();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.DecodePixelWidth = 224;

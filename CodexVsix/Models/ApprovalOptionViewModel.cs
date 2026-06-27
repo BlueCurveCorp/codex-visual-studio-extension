@@ -6,10 +6,10 @@ public sealed class ApprovalOptionViewModel
 {
     public ApprovalOptionViewModel(string label, JToken decision, bool isPrimary = false, bool isDanger = false)
     {
-        Label = label;
-        Decision = decision;
-        IsPrimary = isPrimary;
-        IsDanger = isDanger;
+        this.Label = label;
+        this.Decision = decision;
+        this.IsPrimary = isPrimary;
+        this.IsDanger = isDanger;
     }
 
     public string Label { get; }

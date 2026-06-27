@@ -10,7 +10,7 @@ internal static class CodexExecutableResolver
 {
     public static string NormalizeConfiguredExecutablePath(string? configuredPath)
     {
-        var trimmed = string.IsNullOrWhiteSpace(configuredPath)
+        string trimmed = string.IsNullOrWhiteSpace(configuredPath)
             ? DefaultWindowsExecutableName()
             : configuredPath.Trim();
 
@@ -26,13 +26,13 @@ internal static class CodexExecutableResolver
 
     public static string ResolveExecutableLocation(string? configuredPath, string? environmentVariables)
     {
-        var normalizedConfiguredPath = NormalizeConfiguredExecutablePath(configuredPath);
+        string normalizedConfiguredPath = NormalizeConfiguredExecutablePath(configuredPath);
         if (string.IsNullOrWhiteSpace(normalizedConfiguredPath))
         {
             return string.Empty;
         }
 
-        var directMatch = ResolveDirectPath(normalizedConfiguredPath);
+        string directMatch = ResolveDirectPath(normalizedConfiguredPath);
         if (!string.IsNullOrWhiteSpace(directMatch))
         {
             return directMatch;
@@ -43,13 +43,13 @@ internal static class CodexExecutableResolver
             return string.Empty;
         }
 
-        var fromPath = ResolveFromPath(normalizedConfiguredPath, environmentVariables);
+        string fromPath = ResolveFromPath(normalizedConfiguredPath, environmentVariables);
         if (!string.IsNullOrWhiteSpace(fromPath))
         {
             return fromPath;
         }
 
-        var fromCommandResolution = ResolveWithCommandResolution(normalizedConfiguredPath, environmentVariables);
+        string fromCommandResolution = ResolveWithCommandResolution(normalizedConfiguredPath, environmentVariables);
         if (!string.IsNullOrWhiteSpace(fromCommandResolution))
         {
             return fromCommandResolution;
@@ -75,16 +75,16 @@ internal static class CodexExecutableResolver
 
     private static string ResolveFromPath(string configuredPath, string? environmentVariables)
     {
-        var pathEntries = GetPathSearchEntries(environmentVariables)
+        IEnumerable<string> pathEntries = GetPathSearchEntries(environmentVariables)
             .Where(entry => !string.IsNullOrWhiteSpace(entry));
 
-        var candidateNames = BuildCandidateNames(configuredPath);
-        foreach (var directory in pathEntries)
+        string[] candidateNames = BuildCandidateNames(configuredPath);
+        foreach (string? directory in pathEntries)
         {
-            var normalizedDirectory = directory.Trim().Trim('"');
-            foreach (var candidateName in candidateNames)
+            string normalizedDirectory = directory.Trim().Trim('"');
+            foreach (string candidateName in candidateNames)
             {
-                var candidatePath = Path.Combine(normalizedDirectory, candidateName);
+                string candidatePath = Path.Combine(normalizedDirectory, candidateName);
                 if (File.Exists(candidatePath))
                 {
                     return candidatePath;
@@ -97,8 +97,8 @@ internal static class CodexExecutableResolver
 
     private static IEnumerable<string> GetPathSearchEntries(string? environmentVariables)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in ExpandPathEntries(CodexEnvironmentPathHelper.GetEffectiveEnvironmentVariable("PATH", environmentVariables)))
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string entry in ExpandPathEntries(CodexEnvironmentPathHelper.GetEffectiveEnvironmentVariable("PATH", environmentVariables)))
         {
             if (seen.Add(entry))
             {
@@ -111,7 +111,7 @@ internal static class CodexExecutableResolver
             yield break;
         }
 
-        foreach (var entry in ExpandPathEntries(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? string.Empty))
+        foreach (string entry in ExpandPathEntries(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? string.Empty))
         {
             if (seen.Add(entry))
             {
@@ -119,7 +119,7 @@ internal static class CodexExecutableResolver
             }
         }
 
-        foreach (var entry in ExpandPathEntries(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) ?? string.Empty))
+        foreach (string entry in ExpandPathEntries(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) ?? string.Empty))
         {
             if (seen.Add(entry))
             {
@@ -130,9 +130,9 @@ internal static class CodexExecutableResolver
 
     private static IEnumerable<string> ExpandPathEntries(string pathValue)
     {
-        foreach (var entry in (pathValue ?? string.Empty).Split(Path.PathSeparator))
+        foreach (string? entry in (pathValue ?? string.Empty).Split(Path.PathSeparator))
         {
-            var normalized = entry.Trim().Trim('"');
+            string normalized = entry.Trim().Trim('"');
             if (!string.IsNullOrWhiteSpace(normalized))
             {
                 yield return normalized;
@@ -147,7 +147,7 @@ internal static class CodexExecutableResolver
             return new[] { configuredPath };
         }
 
-        var extension = Path.GetExtension(configuredPath);
+        string extension = Path.GetExtension(configuredPath);
         if (!string.IsNullOrWhiteSpace(extension))
         {
             return new[] { configuredPath };
@@ -170,13 +170,13 @@ internal static class CodexExecutableResolver
             return string.Empty;
         }
 
-        var commandHost = ResolvePowerShellHost();
+        string commandHost = ResolvePowerShellHost();
         if (string.IsNullOrWhiteSpace(commandHost))
         {
             return string.Empty;
         }
 
-        var psi = new ProcessStartInfo
+        ProcessStartInfo psi = new()
         {
             FileName = commandHost,
             Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command " + QuotePowerShellArgument(
@@ -193,14 +193,14 @@ internal static class CodexExecutableResolver
 
         try
         {
-            using var process = Process.Start(psi);
+            using Process? process = Process.Start(psi);
             if (process is null)
             {
                 return string.Empty;
             }
 
-            var output = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit(3000);
+            string output = process.StandardOutput.ReadToEnd().Trim();
+            _ = process.WaitForExit(3000);
             return process.ExitCode == 0 && File.Exists(output) ? output : string.Empty;
         }
         catch
@@ -218,7 +218,7 @@ internal static class CodexExecutableResolver
 
     private static void ApplyEnvironmentVariables(ProcessStartInfo psi, string? environmentVariables)
     {
-        foreach (var entry in CodexEnvironmentPathHelper.ParseEnvironmentVariables(environmentVariables))
+        foreach (KeyValuePair<string, string> entry in CodexEnvironmentPathHelper.ParseEnvironmentVariables(environmentVariables))
         {
             psi.EnvironmentVariables[entry.Key] = entry.Value;
         }
@@ -226,8 +226,8 @@ internal static class CodexExecutableResolver
 
     private static string ResolvePowerShellHost()
     {
-        var systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
-        var windowsPowerShell = Path.Combine(systemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+        string systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        string windowsPowerShell = Path.Combine(systemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
         if (File.Exists(windowsPowerShell))
         {
             return windowsPowerShell;

@@ -8,7 +8,7 @@ internal static class CodexEnvironmentPathHelper
 {
     public static string GetCodexHomeDirectory(string? environmentVariables = null)
     {
-        var configuredHome = GetEffectiveEnvironmentVariable("CODEX_HOME", environmentVariables);
+        string configuredHome = GetEffectiveEnvironmentVariable("CODEX_HOME", environmentVariables);
         if (!string.IsNullOrWhiteSpace(configuredHome))
         {
             return NormalizePath(configuredHome);
@@ -19,7 +19,7 @@ internal static class CodexEnvironmentPathHelper
 
     public static string GetUserHomeDirectory(string? environmentVariables = null)
     {
-        var home = FirstNonEmpty(
+        string home = FirstNonEmpty(
             GetEffectiveEnvironmentVariable("HOME", environmentVariables),
             GetEffectiveEnvironmentVariable("USERPROFILE", environmentVariables));
 
@@ -33,8 +33,8 @@ internal static class CodexEnvironmentPathHelper
 
     public static string GetEffectiveEnvironmentVariable(string key, string? environmentVariables = null)
     {
-        var overrides = ParseEnvironmentVariables(environmentVariables);
-        if (overrides.TryGetValue(key, out var overrideValue) && !string.IsNullOrWhiteSpace(overrideValue))
+        IReadOnlyDictionary<string, string> overrides = ParseEnvironmentVariables(environmentVariables);
+        if (overrides.TryGetValue(key, out string? overrideValue) && !string.IsNullOrWhiteSpace(overrideValue))
         {
             return overrideValue;
         }
@@ -44,17 +44,17 @@ internal static class CodexEnvironmentPathHelper
 
     public static IReadOnlyDictionary<string, string> ParseEnvironmentVariables(string? environmentVariables)
     {
-        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var line in (environmentVariables ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        Dictionary<string, string> values = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string? line in (environmentVariables ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            var separatorIndex = line.IndexOf('=');
+            int separatorIndex = line.IndexOf('=');
             if (separatorIndex <= 0)
             {
                 continue;
             }
 
-            var key = line.Substring(0, separatorIndex).Trim();
-            var value = line.Substring(separatorIndex + 1).Trim();
+            string key = line.Substring(0, separatorIndex).Trim();
+            string value = line.Substring(separatorIndex + 1).Trim();
             if (!string.IsNullOrWhiteSpace(key))
             {
                 values[key] = value;
@@ -66,7 +66,7 @@ internal static class CodexEnvironmentPathHelper
 
     private static string NormalizePath(string path)
     {
-        var expanded = Environment.ExpandEnvironmentVariables((path ?? string.Empty).Trim().Trim('"'));
+        string expanded = Environment.ExpandEnvironmentVariables((path ?? string.Empty).Trim().Trim('"'));
         if (string.IsNullOrWhiteSpace(expanded))
         {
             return string.Empty;
@@ -84,7 +84,7 @@ internal static class CodexEnvironmentPathHelper
 
     private static string FirstNonEmpty(params string?[] values)
     {
-        foreach (var value in values)
+        foreach (string? value in values)
         {
             if (!string.IsNullOrWhiteSpace(value))
             {

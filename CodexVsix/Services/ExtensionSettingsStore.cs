@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+
 using CodexVsix.Models;
+
 using Newtonsoft.Json;
 
 namespace CodexVsix.Services;
@@ -24,9 +26,9 @@ public sealed class ExtensionSettingsStore
                 return new CodexExtensionSettings();
             }
 
-            var json = File.ReadAllText(SettingsFile);
-            var settings = JsonConvert.DeserializeObject<CodexExtensionSettings>(json) ?? new CodexExtensionSettings();
-            settings.PromptHistory ??= new();
+            string json = File.ReadAllText(SettingsFile);
+            CodexExtensionSettings settings = JsonConvert.DeserializeObject<CodexExtensionSettings>(json) ?? new CodexExtensionSettings();
+            settings.PromptHistory ??= [];
             settings.CodexExecutablePath ??= "codex.cmd";
             settings.LanguageOverride ??= "";
             settings.WorkingDirectory ??= "";
@@ -42,12 +44,12 @@ public sealed class ExtensionSettingsStore
             settings.RawTomlOverrides ??= "";
             settings.CurrentThreadId ??= "";
             settings.LastThreadWorkingDirectory ??= "";
-            settings.CustomModels ??= new();
-            settings.CustomReasoningEfforts ??= new();
-            settings.CustomVerbosityOptions ??= new();
-            settings.CustomServiceTiers ??= new();
-            settings.ManagedMcpServers ??= new();
-            settings.PreferredMcpServers ??= new();
+            settings.CustomModels ??= [];
+            settings.CustomReasoningEfforts ??= [];
+            settings.CustomVerbosityOptions ??= [];
+            settings.CustomServiceTiers ??= [];
+            settings.ManagedMcpServers ??= [];
+            settings.PreferredMcpServers ??= [];
             return settings;
         }
         catch
@@ -58,8 +60,8 @@ public sealed class ExtensionSettingsStore
 
     public void Save(CodexExtensionSettings settings)
     {
-        Directory.CreateDirectory(SettingsDirectory);
-        var json = JsonConvert.SerializeObject(settings, Formatting.Indented);
+        _ = Directory.CreateDirectory(SettingsDirectory);
+        string json = JsonConvert.SerializeObject(settings, Formatting.Indented);
         File.WriteAllText(SettingsFile, json);
     }
 }

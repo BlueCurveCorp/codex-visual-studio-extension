@@ -4,13 +4,13 @@ public sealed class SelectionOption
 {
     public SelectionOption(string label, string value)
     {
-        Label = label;
-        Value = value;
+        this.Label = label;
+        this.Value = value;
     }
 
     public string Label { get; }
 
     public string Value { get; }
 
-    public override string ToString() => Label;
+    public override string ToString() => this.Label;
 }

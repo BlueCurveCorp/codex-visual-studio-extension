@@ -1,6 +1,3 @@
-using CodexVsix.Services;
-using Microsoft.VisualStudio.PlatformUI;
-using Microsoft.VisualStudio.Shell;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -15,6 +12,12 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+
+using CodexVsix.Services;
+
+using Microsoft.VisualStudio.PlatformUI;
+using Microsoft.VisualStudio.Shell;
+
 using File = System.IO.File;
 using IOPath = System.IO.Path;
 
@@ -24,8 +27,8 @@ internal sealed class MarkdownRenderOptions
 {
     public MarkdownRenderOptions(ICommand? linkCommand = null, string? workspaceRoot = null)
     {
-        LinkCommand = linkCommand;
-        WorkspaceRoot = workspaceRoot ?? string.Empty;
+        this.LinkCommand = linkCommand;
+        this.WorkspaceRoot = workspaceRoot ?? string.Empty;
     }
 
     public ICommand? LinkCommand { get; }
@@ -66,14 +69,14 @@ internal static class MarkdownRenderer
 
     public static FlowDocument CreateDocument(string markdown, Brush? foreground = null, MarkdownRenderOptions? options = null)
     {
-        var previousTheme = _currentTheme;
-        var previousOptions = _currentOptions;
+        MarkdownRenderTheme? previousTheme = _currentTheme;
+        MarkdownRenderOptions? previousOptions = _currentOptions;
         _currentTheme = MarkdownRenderTheme.Create(foreground);
         _currentOptions = options ?? new MarkdownRenderOptions();
 
         try
         {
-            var document = new FlowDocument
+            FlowDocument document = new()
             {
                 PagePadding = new Thickness(0),
                 Background = Brushes.Transparent,
@@ -82,7 +85,7 @@ internal static class MarkdownRenderer
                 Foreground = CreateBrush(CurrentTheme.PrimaryTextColor)
             };
 
-            foreach (var block in ParseBlocks(markdown ?? string.Empty))
+            foreach (Block block in ParseBlocks(markdown ?? string.Empty))
             {
                 document.Blocks.Add(block);
             }
@@ -103,12 +106,12 @@ internal static class MarkdownRenderer
 
     private static IEnumerable<Block> ParseBlocks(string markdown)
     {
-        var lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-        var index = 0;
+        string[] lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        int index = 0;
 
         while (index < lines.Length)
         {
-            var line = lines[index];
+            string line = lines[index];
             if (string.IsNullOrWhiteSpace(line))
             {
                 index++;
@@ -121,7 +124,7 @@ internal static class MarkdownRenderer
                 continue;
             }
 
-            var headingMatch = HeadingRegex.Match(line);
+            Match headingMatch = HeadingRegex.Match(line);
             if (headingMatch.Success)
             {
                 yield return CreateHeading(headingMatch.Groups[1].Value.Length, headingMatch.Groups[2].Value.Trim());
@@ -147,10 +150,10 @@ internal static class MarkdownRenderer
 
     private static Block ParseCodeFence(IReadOnlyList<string> lines, ref int index)
     {
-        var fenceHeader = ParseFenceHeader(lines[index]);
+        FenceHeader fenceHeader = ParseFenceHeader(lines[index]);
         index++;
 
-        var codeLines = new List<string>();
+        List<string> codeLines = [];
         if (!string.IsNullOrWhiteSpace(fenceHeader.InlineContent))
         {
             codeLines.Add(fenceHeader.InlineContent);
@@ -167,7 +170,7 @@ internal static class MarkdownRenderer
             index++;
         }
 
-        var code = string.Join(Environment.NewLine, codeLines);
+        string code = string.Join(Environment.NewLine, codeLines);
         return new BlockUIContainer(string.Equals(fenceHeader.Language, "mermaid", StringComparison.OrdinalIgnoreCase)
             ? CreateMermaidBlock(code)
             : CreateCodeBlock(code, fenceHeader.Language));
@@ -175,7 +178,7 @@ internal static class MarkdownRenderer
 
     private static Block ParseList(IReadOnlyList<string> lines, ref int index, bool ordered)
     {
-        var list = new List
+        List list = new()
         {
             MarkerStyle = ordered ? TextMarkerStyle.Decimal : TextMarkerStyle.Disc,
             Margin = new Thickness(0, 6, 0, 10),
@@ -184,14 +187,14 @@ internal static class MarkdownRenderer
 
         while (index < lines.Count)
         {
-            var line = lines[index];
-            var match = ordered ? OrderedRegex.Match(line) : BulletRegex.Match(line);
+            string line = lines[index];
+            Match match = ordered ? OrderedRegex.Match(line) : BulletRegex.Match(line);
             if (!match.Success)
             {
                 break;
             }
 
-            var paragraph = CreateParagraph(match.Groups[1].Value.Trim());
+            Paragraph paragraph = CreateParagraph(match.Groups[1].Value.Trim());
             paragraph.Margin = new Thickness(0);
             list.ListItems.Add(new ListItem(paragraph));
             index++;
@@ -202,10 +205,10 @@ internal static class MarkdownRenderer
 
     private static Block ParseParagraph(IReadOnlyList<string> lines, ref int index)
     {
-        var parts = new List<string>();
+        List<string> parts = [];
         while (index < lines.Count)
         {
-            var line = lines[index];
+            string line = lines[index];
             if (string.IsNullOrWhiteSpace(line) ||
                 line.TrimStart().StartsWith("```", StringComparison.Ordinal) ||
                 HeadingRegex.IsMatch(line) ||
@@ -224,7 +227,7 @@ internal static class MarkdownRenderer
 
     private static Paragraph CreateHeading(int level, string text)
     {
-        var paragraph = CreateParagraph(text);
+        Paragraph paragraph = CreateParagraph(text);
         paragraph.FontWeight = FontWeights.SemiBold;
         paragraph.Margin = new Thickness(0, level <= 2 ? 10 : 8, 0, 6);
         paragraph.FontSize = level switch
@@ -240,13 +243,13 @@ internal static class MarkdownRenderer
 
     private static Paragraph CreateParagraph(string text)
     {
-        var paragraph = new Paragraph
+        Paragraph paragraph = new()
         {
             Margin = new Thickness(0, 4, 0, 8),
             LineHeight = 20
         };
 
-        foreach (var inline in ParseInlines(text))
+        foreach (Inline inline in ParseInlines(text))
         {
             paragraph.Inlines.Add(inline);
         }
@@ -262,10 +265,10 @@ internal static class MarkdownRenderer
             yield break;
         }
 
-        var remaining = text;
+        string remaining = text;
         while (remaining.Length > 0)
         {
-            var nextMatch = FindNextInlineMatch(remaining);
+            InlineMatch? nextMatch = FindNextInlineMatch(remaining);
             if (nextMatch is null)
             {
                 yield return new Run(remaining);
@@ -284,7 +287,7 @@ internal static class MarkdownRenderer
 
     private static InlineMatch? FindNextInlineMatch(string text)
     {
-        var candidates = new List<InlineMatch>();
+        List<InlineMatch> candidates = [];
         AddInlineMatch(candidates, text, @"`(?<content>[^`]+)`", match => CreateInlineCode(match.Groups["content"].Value));
         AddInlineMatch(candidates, text, @"\[(?<label>[^\]]+)\]\((?<url>[^)]+)\)", match => CreateHyperlink(match.Groups["label"].Value, match.Groups["url"].Value));
         AddInlineMatch(candidates, text, FileReferenceRegex, match => CreateFileReferenceHyperlink(match.Value));
@@ -317,18 +320,18 @@ internal static class MarkdownRenderer
 
     private static Inline CreateInlineCode(string code)
     {
-        var displayText = TrimFileReferenceDisplay(code);
+        string displayText = TrimFileReferenceDisplay(code);
         if (CanExecuteLinkCommand(CurrentOptions.LinkCommand, displayText))
         {
             return CreateFileReferenceHyperlink(displayText, displayText, renderAsInlineCode: true);
         }
 
-        if (TryResolveWorkspaceFileReference(displayText, out var target))
+        if (TryResolveWorkspaceFileReference(displayText, out string? target))
         {
             return CreateFileReferenceHyperlink(displayText, target, renderAsInlineCode: true);
         }
 
-        var border = new Border
+        Border border = new()
         {
             Background = CreateBrush(CurrentTheme.InlineCodeBackgroundColor),
             BorderBrush = CreateBrush(CurrentTheme.InlineCodeBorderColor),
@@ -352,14 +355,14 @@ internal static class MarkdownRenderer
 
     private static Inline CreateHyperlink(string label, string url)
     {
-        var command = CurrentOptions.LinkCommand;
-        var target = TrimFileReferenceDisplay(url);
+        ICommand? command = CurrentOptions.LinkCommand;
+        string target = TrimFileReferenceDisplay(url);
         if (CanExecuteLinkCommand(command, target))
         {
             return CreateCommandHyperlink(label, target, command);
         }
 
-        var hyperlink = new Hyperlink(new Run(label))
+        Hyperlink hyperlink = new(new Run(label))
         {
             Foreground = CreateBrush(CurrentTheme.LinkColor),
             Cursor = System.Windows.Input.Cursors.Hand
@@ -376,7 +379,7 @@ internal static class MarkdownRenderer
                     return;
                 }
 
-                Process.Start(new ProcessStartInfo
+                _ = Process.Start(new ProcessStartInfo
                 {
                     FileName = url,
                     UseShellExecute = true
@@ -392,14 +395,14 @@ internal static class MarkdownRenderer
 
     private static Inline CreateFileReferenceHyperlink(string reference)
     {
-        var command = CurrentOptions.LinkCommand;
-        var displayText = TrimFileReferenceDisplay(reference);
+        ICommand? command = CurrentOptions.LinkCommand;
+        string displayText = TrimFileReferenceDisplay(reference);
         if (CanExecuteLinkCommand(command, displayText))
         {
             return CreateFileReferenceHyperlink(displayText, displayText, renderAsInlineCode: false);
         }
 
-        if (!TryResolveWorkspaceFileReference(displayText, out var target))
+        if (!TryResolveWorkspaceFileReference(displayText, out string? target))
         {
             return new Run(reference);
         }
@@ -409,7 +412,7 @@ internal static class MarkdownRenderer
 
     private static Inline CreateCommandHyperlink(string label, string target, ICommand? command)
     {
-        var hyperlink = new Hyperlink(new Run(label))
+        Hyperlink hyperlink = new(new Run(label))
         {
             Foreground = CreateBrush(CurrentTheme.LinkColor),
             Cursor = System.Windows.Input.Cursors.Hand,
@@ -419,7 +422,7 @@ internal static class MarkdownRenderer
         hyperlink.Click += (_, e) =>
         {
             e.Handled = true;
-            TryExecuteLinkCommand(command, target);
+            _ = TryExecuteLinkCommand(command, target);
         };
 
         return hyperlink;
@@ -427,8 +430,8 @@ internal static class MarkdownRenderer
 
     private static Inline CreateFileReferenceHyperlink(string label, string target, bool renderAsInlineCode)
     {
-        var command = CurrentOptions.LinkCommand;
-        var hyperlink = new Hyperlink();
+        ICommand? command = CurrentOptions.LinkCommand;
+        Hyperlink hyperlink = new();
 
         if (renderAsInlineCode)
         {
@@ -448,7 +451,7 @@ internal static class MarkdownRenderer
         hyperlink.Click += (_, e) =>
         {
             e.Handled = true;
-            TryExecuteLinkCommand(command, target);
+            _ = TryExecuteLinkCommand(command, target);
         };
 
         return hyperlink;
@@ -519,20 +522,20 @@ internal static class MarkdownRenderer
     private static bool TryResolveWorkspaceFileReference(string reference, out string target)
     {
         target = string.Empty;
-        var normalizedReference = TrimFileReferenceDisplay(reference);
+        string normalizedReference = TrimFileReferenceDisplay(reference);
         if (string.IsNullOrWhiteSpace(normalizedReference) || IsExternalUri(normalizedReference))
         {
             return false;
         }
 
-        var pathPart = StripFilePosition(normalizedReference, out var position);
+        string pathPart = StripFilePosition(normalizedReference, out string? position);
         if (string.IsNullOrWhiteSpace(pathPart))
         {
             return false;
         }
 
-        var workspaceRoot = CurrentOptions.WorkspaceRoot;
-        var candidate = pathPart;
+        string workspaceRoot = CurrentOptions.WorkspaceRoot;
+        string candidate = pathPart;
         if (!IOPath.IsPathRooted(candidate))
         {
             if (string.IsNullOrWhiteSpace(workspaceRoot))
@@ -545,7 +548,7 @@ internal static class MarkdownRenderer
 
         try
         {
-            var fullPath = IOPath.GetFullPath(candidate);
+            string fullPath = IOPath.GetFullPath(candidate);
             if (!File.Exists(fullPath) || !IsPathInsideWorkspace(fullPath, workspaceRoot))
             {
                 return false;
@@ -569,8 +572,8 @@ internal static class MarkdownRenderer
 
         try
         {
-            var root = IOPath.GetFullPath(workspaceRoot);
-            var normalizedRoot = root.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar) + IOPath.DirectorySeparatorChar;
+            string root = IOPath.GetFullPath(workspaceRoot);
+            string normalizedRoot = root.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar) + IOPath.DirectorySeparatorChar;
             return fullPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(fullPath.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar), root.TrimEnd(IOPath.DirectorySeparatorChar, IOPath.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
         }
@@ -583,13 +586,13 @@ internal static class MarkdownRenderer
     private static string StripFilePosition(string value, out string position)
     {
         position = string.Empty;
-        var match = Regex.Match(value, @"^(?<path>.+?)(?<position>:(?<line>\d+)(?::(?<column>\d+))?)$");
+        Match match = Regex.Match(value, @"^(?<path>.+?)(?<position>:(?<line>\d+)(?::(?<column>\d+))?)$");
         if (!match.Success)
         {
             return value;
         }
 
-        var path = match.Groups["path"].Value;
+        string path = match.Groups["path"].Value;
         if (IOPath.IsPathRooted(value) && Regex.IsMatch(value, @"^[A-Za-z]:[\\/][^:]+$"))
         {
             return value;
@@ -608,7 +611,7 @@ internal static class MarkdownRenderer
 
     private static bool IsExternalUri(string target)
     {
-        if (!Uri.TryCreate(target, UriKind.Absolute, out var uri))
+        if (!Uri.TryCreate(target, UriKind.Absolute, out Uri? uri))
         {
             return false;
         }
@@ -623,22 +626,22 @@ internal static class MarkdownRenderer
 
     private static FrameworkElement CreateCodeBlock(string code, string language)
     {
-        var host = new StackPanel();
-        host.Children.Add(CreateBlockToolbar(GetLanguageDisplayName(language), code, null));
-        host.Children.Add(CreateCodeViewer(code, language));
+        StackPanel host = new();
+        _ = host.Children.Add(CreateBlockToolbar(GetLanguageDisplayName(language), code, null));
+        _ = host.Children.Add(CreateCodeViewer(code, language));
         return CreateBlockBorder(host);
     }
 
     private static FrameworkElement CreateMermaidBlock(string code)
     {
-        var preview = CreateMermaidPreview(code);
-        var codeView = CreateCodeViewer(code, "mermaid");
+        FrameworkElement preview = CreateMermaidPreview(code);
+        FrameworkElement codeView = CreateCodeViewer(code, "mermaid");
         codeView.Visibility = Visibility.Collapsed;
 
-        var host = new StackPanel();
-        host.Children.Add(CreateBlockToolbar("Mermaid", code, CreateMermaidViewSwitch(preview, codeView)));
-        host.Children.Add(preview);
-        host.Children.Add(codeView);
+        StackPanel host = new();
+        _ = host.Children.Add(CreateBlockToolbar("Mermaid", code, CreateMermaidViewSwitch(preview, codeView)));
+        _ = host.Children.Add(preview);
+        _ = host.Children.Add(codeView);
         return CreateBlockBorder(host);
     }
 
@@ -658,13 +661,13 @@ internal static class MarkdownRenderer
 
     private static FrameworkElement CreateBlockToolbar(string title, string contentToCopy, FrameworkElement? leadingControl)
     {
-        var panel = new DockPanel
+        DockPanel panel = new()
         {
             Margin = new Thickness(0, 0, 0, 10),
             LastChildFill = false
         };
 
-        var actionsHost = new StackPanel
+        StackPanel actionsHost = new()
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right
@@ -672,43 +675,40 @@ internal static class MarkdownRenderer
 
         if (leadingControl is not null)
         {
-            actionsHost.Children.Add(leadingControl);
+            _ = actionsHost.Children.Add(leadingControl);
         }
 
-        var copyButton = CreateIconButton(CopyIconPathData, Localization.CopyButton);
+        Button copyButton = CreateIconButton(CopyIconPathData, Localization.CopyButton);
         copyButton.RequestBringIntoView += (_, e) => e.Handled = true;
         copyButton.Click += (sender, e) =>
         {
             e.Handled = true;
-            var scrollViewer = sender is DependencyObject source ? FindAncestor<ScrollViewer>(source) : null;
-            var horizontalOffset = scrollViewer?.HorizontalOffset ?? 0d;
-            var verticalOffset = scrollViewer?.VerticalOffset ?? 0d;
+            ScrollViewer? scrollViewer = sender is DependencyObject source ? FindAncestor<ScrollViewer>(source) : null;
+            double horizontalOffset = scrollViewer?.HorizontalOffset ?? 0d;
+            double verticalOffset = scrollViewer?.VerticalOffset ?? 0d;
 
             Clipboard.SetText(contentToCopy ?? string.Empty);
 
-            if (scrollViewer is not null)
-            {
-                scrollViewer.Dispatcher.BeginInvoke(
+            _ = scrollViewer?.Dispatcher.BeginInvoke(
                     new Action(() =>
                     {
                         scrollViewer.ScrollToHorizontalOffset(horizontalOffset);
                         scrollViewer.ScrollToVerticalOffset(verticalOffset);
                     }),
                     DispatcherPriority.ContextIdle);
-            }
         };
-        actionsHost.Children.Add(copyButton);
+        _ = actionsHost.Children.Add(copyButton);
 
         DockPanel.SetDock(actionsHost, Dock.Right);
-        panel.Children.Add(actionsHost);
-        panel.Children.Add(CreateLanguageBadge(title));
+        _ = panel.Children.Add(actionsHost);
+        _ = panel.Children.Add(CreateLanguageBadge(title));
 
         return panel;
     }
 
     private static FrameworkElement CreateMermaidViewSwitch(FrameworkElement preview, FrameworkElement codeView)
     {
-        var stateLabel = new TextBlock
+        TextBlock stateLabel = new()
         {
             Text = Localization.MermaidDiagramLabel,
             Foreground = CreateBrush(CurrentTheme.PrimaryTextColor),
@@ -718,7 +718,7 @@ internal static class MarkdownRenderer
             FontWeight = FontWeights.SemiBold
         };
 
-        var toggle = new ToggleButton
+        ToggleButton toggle = new()
         {
             IsChecked = true,
             Width = 40,
@@ -730,10 +730,12 @@ internal static class MarkdownRenderer
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        var rootFactory = new FrameworkElementFactory(typeof(Grid));
+        FrameworkElementFactory rootFactory = new(typeof(Grid));
 
-        var trackFactory = new FrameworkElementFactory(typeof(Border));
-        trackFactory.Name = "Track";
+        FrameworkElementFactory trackFactory = new(typeof(Border))
+        {
+            Name = "Track"
+        };
         trackFactory.SetValue(FrameworkElement.WidthProperty, 40d);
         trackFactory.SetValue(FrameworkElement.HeightProperty, 22d);
         trackFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(11));
@@ -741,8 +743,10 @@ internal static class MarkdownRenderer
         trackFactory.SetValue(Border.BorderBrushProperty, CreateBrush(CurrentTheme.ToggleTrackOnBorderColor));
         trackFactory.SetValue(Border.BorderThicknessProperty, new Thickness(1));
 
-        var thumbFactory = new FrameworkElementFactory(typeof(Border));
-        thumbFactory.Name = "Thumb";
+        FrameworkElementFactory thumbFactory = new(typeof(Border))
+        {
+            Name = "Thumb"
+        };
         thumbFactory.SetValue(FrameworkElement.WidthProperty, 16d);
         thumbFactory.SetValue(FrameworkElement.HeightProperty, 16d);
         thumbFactory.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 3, 0));
@@ -756,12 +760,12 @@ internal static class MarkdownRenderer
         rootFactory.AppendChild(trackFactory);
         rootFactory.AppendChild(thumbFactory);
 
-        var template = new ControlTemplate(typeof(ToggleButton))
+        ControlTemplate template = new(typeof(ToggleButton))
         {
             VisualTree = rootFactory
         };
 
-        var uncheckedTrigger = new Trigger
+        Trigger uncheckedTrigger = new()
         {
             Property = ToggleButton.IsCheckedProperty,
             Value = false
@@ -771,7 +775,7 @@ internal static class MarkdownRenderer
         uncheckedTrigger.Setters.Add(new Setter(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Left, "Thumb"));
         uncheckedTrigger.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(3, 0, 0, 0), "Thumb"));
 
-        var hoverTrigger = new Trigger
+        Trigger hoverTrigger = new()
         {
             Property = UIElement.IsMouseOverProperty,
             Value = true
@@ -832,7 +836,7 @@ internal static class MarkdownRenderer
 
     private static Button CreateIconButton(string pathData, string toolTip)
     {
-        var button = new Button
+        Button button = new()
         {
             Width = 28,
             Height = 28,
@@ -857,24 +861,26 @@ internal static class MarkdownRenderer
             }
         };
 
-        var borderFactory = new FrameworkElementFactory(typeof(Border));
-        borderFactory.Name = "Chrome";
+        FrameworkElementFactory borderFactory = new(typeof(Border))
+        {
+            Name = "Chrome"
+        };
         borderFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
         borderFactory.SetValue(Border.BorderBrushProperty, Brushes.Transparent);
         borderFactory.SetValue(Border.BorderThicknessProperty, new Thickness(0));
         borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(999));
 
-        var presenterFactory = new FrameworkElementFactory(typeof(ContentPresenter));
+        FrameworkElementFactory presenterFactory = new(typeof(ContentPresenter));
         presenterFactory.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
         presenterFactory.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
         borderFactory.AppendChild(presenterFactory);
 
-        var template = new ControlTemplate(typeof(Button))
+        ControlTemplate template = new(typeof(Button))
         {
             VisualTree = borderFactory
         };
 
-        var hoverTrigger = new Trigger
+        Trigger hoverTrigger = new()
         {
             Property = UIElement.IsMouseOverProperty,
             Value = true
@@ -883,7 +889,7 @@ internal static class MarkdownRenderer
         hoverTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, CreateBrush(CurrentTheme.IconHoverBorderColor), "Chrome"));
         hoverTrigger.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(1), "Chrome"));
 
-        var pressedTrigger = new Trigger
+        Trigger pressedTrigger = new()
         {
             Property = ButtonBase.IsPressedProperty,
             Value = true
@@ -902,7 +908,7 @@ internal static class MarkdownRenderer
     private static T? FindAncestor<T>(DependencyObject? source)
         where T : DependencyObject
     {
-        var current = source;
+        DependencyObject? current = source;
         while (current is not null)
         {
             if (current is T match)
@@ -938,7 +944,7 @@ internal static class MarkdownRenderer
 
     private static FlowDocument CreateCodeDocument(string code, string language)
     {
-        var document = new FlowDocument
+        FlowDocument document = new()
         {
             PagePadding = new Thickness(0),
             Background = Brushes.Transparent,
@@ -947,17 +953,17 @@ internal static class MarkdownRenderer
             Foreground = CreateBrush(CurrentTheme.PrimaryTextColor)
         };
 
-        var normalizedLanguage = (language ?? string.Empty).Trim().ToLowerInvariant();
-        var lines = (code ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-        foreach (var line in lines)
+        string normalizedLanguage = (language ?? string.Empty).Trim().ToLowerInvariant();
+        string[] lines = (code ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        foreach (string? line in lines)
         {
-            var paragraph = new Paragraph
+            Paragraph paragraph = new()
             {
                 Margin = new Thickness(0),
                 LineHeight = 18
             };
 
-            foreach (var inline in CreateCodeInlines(line, normalizedLanguage))
+            foreach (Inline inline in CreateCodeInlines(line, normalizedLanguage))
             {
                 paragraph.Inlines.Add(inline);
             }
@@ -975,14 +981,14 @@ internal static class MarkdownRenderer
 
     private static IEnumerable<Inline> CreateCodeInlines(string line, string language)
     {
-        var regex = SelectSyntaxRegex(language);
+        Regex? regex = SelectSyntaxRegex(language);
         if (regex is null || string.IsNullOrEmpty(line))
         {
             yield return new Run(line ?? string.Empty);
             yield break;
         }
 
-        var index = 0;
+        int index = 0;
         foreach (Match match in regex.Matches(line))
         {
             if (!match.Success)
@@ -1018,7 +1024,7 @@ internal static class MarkdownRenderer
 
     private static Run CreateHighlightedRun(Match match)
     {
-        var text = match.Value;
+        string text = match.Value;
         if (match.Groups["comment"].Success)
         {
             return CreateRun(text, CurrentTheme.CodeCommentColor);
@@ -1049,7 +1055,7 @@ internal static class MarkdownRenderer
 
     private static Run CreateRun(string text, Color color, FontWeight? weight = null)
     {
-        var run = new Run(text)
+        Run run = new(text)
         {
             Foreground = CreateBrush(color)
         };
@@ -1065,15 +1071,15 @@ internal static class MarkdownRenderer
 #pragma warning disable CS0162
     private static FrameworkElement CreateMermaidPreview(string code)
     {
-        var diagram = ParseMermaidDiagram(code);
+        MermaidDiagram diagram = ParseMermaidDiagram(code);
         if (diagram.Nodes.Count == 0)
         {
-            var fallbackText = new TextBlock
+            TextBlock fallbackText = new()
             {
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = CreateBrush(CurrentTheme.PrimaryTextColor)
+                Foreground = CreateBrush(CurrentTheme.PrimaryTextColor),
+                Text = Localization.MermaidPreviewFallback
             };
-            fallbackText.Text = Localization.MermaidPreviewFallback;
             return fallbackText;
 
             return new TextBlock
@@ -1086,34 +1092,34 @@ internal static class MarkdownRenderer
 
         LayoutMermaidDiagram(diagram);
 
-        var canvas = new Canvas
+        Canvas canvas = new()
         {
             Width = diagram.CanvasWidth,
             Height = diagram.CanvasHeight,
             Background = Brushes.Transparent
         };
 
-        foreach (var subgraph in diagram.Subgraphs.OrderBy(group => group.Depth).ThenBy(group => group.Id, StringComparer.Ordinal))
+        foreach (MermaidSubgraph? subgraph in diagram.Subgraphs.OrderBy(group => group.Depth).ThenBy(group => group.Id, StringComparer.Ordinal))
         {
-            var groupElement = CreateMermaidSubgraphElement(subgraph);
+            FrameworkElement groupElement = CreateMermaidSubgraphElement(subgraph);
             Canvas.SetLeft(groupElement, subgraph.X);
             Canvas.SetTop(groupElement, subgraph.Y);
             Panel.SetZIndex(groupElement, 0);
-            canvas.Children.Add(groupElement);
+            _ = canvas.Children.Add(groupElement);
         }
 
-        foreach (var edge in diagram.Edges)
+        foreach (MermaidEdge edge in diagram.Edges)
         {
             AddMermaidEdgeVisual(canvas, edge);
         }
 
-        foreach (var node in diagram.Nodes.Values)
+        foreach (MermaidNode node in diagram.Nodes.Values)
         {
-            var element = CreateMermaidNodeElement(node);
+            FrameworkElement element = CreateMermaidNodeElement(node);
             Canvas.SetLeft(element, node.X);
             Canvas.SetTop(element, node.Y);
             Panel.SetZIndex(element, 10);
-            canvas.Children.Add(element);
+            _ = canvas.Children.Add(element);
         }
 
         return new Border
@@ -1134,13 +1140,13 @@ internal static class MarkdownRenderer
 
     private static MermaidDiagram ParseMermaidDiagram(string code)
     {
-        var diagram = new MermaidDiagram();
-        var subgraphStack = new Stack<MermaidSubgraph>();
+        MermaidDiagram diagram = new();
+        Stack<MermaidSubgraph> subgraphStack = new();
 
-        foreach (var rawLine in (code ?? string.Empty).Replace("\r\n", "\n").Split('\n'))
+        foreach (string? rawLine in (code ?? string.Empty).Replace("\r\n", "\n").Split('\n'))
         {
-            var normalizedLine = NormalizeMermaidEdgeLine(rawLine);
-            foreach (var statement in EnumerateMermaidStatements(normalizedLine))
+            string normalizedLine = NormalizeMermaidEdgeLine(rawLine);
+            foreach (string statement in EnumerateMermaidStatements(normalizedLine))
             {
                 if (string.IsNullOrWhiteSpace(statement) || statement.StartsWith("%%", StringComparison.Ordinal))
                 {
@@ -1177,10 +1183,10 @@ internal static class MarkdownRenderer
                     continue;
                 }
 
-                var nodeMatch = MermaidNodeRegex.Match(statement);
+                Match nodeMatch = MermaidNodeRegex.Match(statement);
                 if (nodeMatch.Success)
                 {
-                    GetOrCreateMermaidNode(
+                    _ = GetOrCreateMermaidNode(
                         diagram,
                         nodeMatch.Groups["id"].Value,
                         nodeMatch.Groups["label"].Value,
@@ -1190,17 +1196,17 @@ internal static class MarkdownRenderer
                     continue;
                 }
 
-                var textLabelMatch = MermaidTextLabelEdgeRegex.Match(statement);
+                Match textLabelMatch = MermaidTextLabelEdgeRegex.Match(statement);
                 if (textLabelMatch.Success)
                 {
-                    var fromNode = GetOrCreateMermaidNode(
+                    MermaidNode fromNode = GetOrCreateMermaidNode(
                         diagram,
                         textLabelMatch.Groups["from"].Value,
                         textLabelMatch.Groups["fromLabel"].Value,
                         textLabelMatch.Groups["fromRound"].Value,
                         textLabelMatch.Groups["fromBrace"].Value,
                         subgraphStack);
-                    var toNode = GetOrCreateMermaidNode(
+                    MermaidNode toNode = GetOrCreateMermaidNode(
                         diagram,
                         textLabelMatch.Groups["to"].Value,
                         textLabelMatch.Groups["toLabel"].Value,
@@ -1212,20 +1218,20 @@ internal static class MarkdownRenderer
                     continue;
                 }
 
-                var match = MermaidEdgeRegex.Match(statement);
+                Match match = MermaidEdgeRegex.Match(statement);
                 if (!match.Success)
                 {
                     continue;
                 }
 
-                var from = GetOrCreateMermaidNode(
+                MermaidNode from = GetOrCreateMermaidNode(
                     diagram,
                     match.Groups["from"].Value,
                     match.Groups["fromLabel"].Value,
                     match.Groups["fromRound"].Value,
                     match.Groups["fromBrace"].Value,
                     subgraphStack);
-                var to = GetOrCreateMermaidNode(
+                MermaidNode to = GetOrCreateMermaidNode(
                     diagram,
                     match.Groups["to"].Value,
                     match.Groups["toLabel"].Value,
@@ -1250,21 +1256,21 @@ internal static class MarkdownRenderer
         string diamondLabel,
         IEnumerable<MermaidSubgraph>? activeSubgraphs = null)
     {
-        if (!diagram.Nodes.TryGetValue(id, out var node))
+        if (!diagram.Nodes.TryGetValue(id, out MermaidNode? node))
         {
-            var label = NormalizeMermaidText(SelectNodeLabel(id, squareLabel, roundedLabel, diamondLabel));
+            string label = NormalizeMermaidText(SelectNodeLabel(id, squareLabel, roundedLabel, diamondLabel));
             node = new MermaidNode(id, label, GetNodeShape(squareLabel, roundedLabel, diamondLabel));
             diagram.Nodes.Add(id, node);
         }
         else
         {
-            var label = NormalizeMermaidText(SelectNodeLabel(id, squareLabel, roundedLabel, diamondLabel));
+            string label = NormalizeMermaidText(SelectNodeLabel(id, squareLabel, roundedLabel, diamondLabel));
             if (!string.IsNullOrWhiteSpace(label) && string.Equals(node.Label, node.Id, StringComparison.Ordinal))
             {
                 node.Label = label;
             }
 
-            var shape = GetNodeShape(squareLabel, roundedLabel, diamondLabel);
+            MermaidNodeShape shape = GetNodeShape(squareLabel, roundedLabel, diamondLabel);
             if (shape != MermaidNodeShape.Rectangle)
             {
                 node.Shape = shape;
@@ -1273,9 +1279,9 @@ internal static class MarkdownRenderer
 
         if (activeSubgraphs is not null)
         {
-            foreach (var subgraph in activeSubgraphs)
+            foreach (MermaidSubgraph subgraph in activeSubgraphs)
             {
-                subgraph.NodeIds.Add(node.Id);
+                _ = subgraph.NodeIds.Add(node.Id);
             }
         }
 
@@ -1289,15 +1295,15 @@ internal static class MarkdownRenderer
             yield break;
         }
 
-        var start = 0;
-        var bracketDepth = 0;
-        var parenDepth = 0;
-        var braceDepth = 0;
-        var inQuotes = false;
+        int start = 0;
+        int bracketDepth = 0;
+        int parenDepth = 0;
+        int braceDepth = 0;
+        bool inQuotes = false;
 
-        for (var index = 0; index < line.Length; index++)
+        for (int index = 0; index < line.Length; index++)
         {
-            var current = line[index];
+            char current = line[index];
             switch (current)
             {
                 case '"':
@@ -1322,7 +1328,7 @@ internal static class MarkdownRenderer
                     braceDepth--;
                     break;
                 case ';' when !inQuotes && bracketDepth == 0 && parenDepth == 0 && braceDepth == 0:
-                    var statement = line.Substring(start, index - start).Trim();
+                    string statement = line.Substring(start, index - start).Trim();
                     if (!string.IsNullOrWhiteSpace(statement))
                     {
                         yield return statement;
@@ -1333,7 +1339,7 @@ internal static class MarkdownRenderer
             }
         }
 
-        var trailing = line.Substring(start).Trim();
+        string trailing = line.Substring(start).Trim();
         if (!string.IsNullOrWhiteSpace(trailing))
         {
             yield return trailing;
@@ -1346,7 +1352,7 @@ internal static class MarkdownRenderer
         {
             if (subgraphStack.Count > 0)
             {
-                subgraphStack.Pop();
+                _ = subgraphStack.Pop();
             }
 
             return true;
@@ -1358,19 +1364,19 @@ internal static class MarkdownRenderer
             return false;
         }
 
-        var descriptor = statement.Substring(prefix.Length).Trim();
+        string descriptor = statement.Substring(prefix.Length).Trim();
         if (string.IsNullOrWhiteSpace(descriptor))
         {
             return true;
         }
 
-        var nodeMatch = MermaidNodeRegex.Match(descriptor);
-        var id = nodeMatch.Success ? nodeMatch.Groups["id"].Value : $"subgraph-{diagram.Subgraphs.Count + 1}";
-        var label = nodeMatch.Success
+        Match nodeMatch = MermaidNodeRegex.Match(descriptor);
+        string id = nodeMatch.Success ? nodeMatch.Groups["id"].Value : $"subgraph-{diagram.Subgraphs.Count + 1}";
+        string label = nodeMatch.Success
             ? SelectNodeLabel(id, nodeMatch.Groups["label"].Value, nodeMatch.Groups["round"].Value, nodeMatch.Groups["brace"].Value)
             : NormalizeMermaidText(descriptor);
 
-        var subgraph = new MermaidSubgraph(id, string.IsNullOrWhiteSpace(label) ? id : label)
+        MermaidSubgraph subgraph = new(id, string.IsNullOrWhiteSpace(label) ? id : label)
         {
             Depth = subgraphStack.Count
         };
@@ -1392,15 +1398,15 @@ internal static class MarkdownRenderer
             return false;
         }
 
-        var content = statement.Substring(prefix.Length).Trim();
-        var separator = content.IndexOf(' ');
+        string content = statement.Substring(prefix.Length).Trim();
+        int separator = content.IndexOf(' ');
         if (separator <= 0)
         {
             return true;
         }
 
-        var className = content.Substring(0, separator).Trim();
-        var style = ParseMermaidStyle(content.Substring(separator + 1));
+        string className = content.Substring(0, separator).Trim();
+        MermaidStyle style = ParseMermaidStyle(content.Substring(separator + 1));
         diagram.ClassDefinitions[className] = style;
         return true;
     }
@@ -1413,26 +1419,26 @@ internal static class MarkdownRenderer
             return false;
         }
 
-        var content = statement.Substring(prefix.Length).Trim();
-        var separator = content.IndexOf(' ');
+        string content = statement.Substring(prefix.Length).Trim();
+        int separator = content.IndexOf(' ');
         if (separator <= 0)
         {
             return true;
         }
 
-        var targets = content.Substring(0, separator)
+        IEnumerable<string> targets = content.Substring(0, separator)
             .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(value => value.Trim());
-        var classes = content.Substring(separator + 1)
+        List<string> classes = content.Substring(separator + 1)
             .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(value => value.Trim())
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .ToList();
 
-        foreach (var target in targets)
+        foreach (string target in targets)
         {
-            var node = GetOrCreateMermaidNode(diagram, target, string.Empty, string.Empty, string.Empty);
-            foreach (var className in classes)
+            MermaidNode node = GetOrCreateMermaidNode(diagram, target, string.Empty, string.Empty, string.Empty);
+            foreach (string className in classes)
             {
                 if (!node.ClassNames.Any(existing => string.Equals(existing, className, StringComparison.Ordinal)))
                 {
@@ -1452,17 +1458,17 @@ internal static class MarkdownRenderer
             return false;
         }
 
-        var content = statement.Substring(prefix.Length).Trim();
-        var separator = content.IndexOf(' ');
+        string content = statement.Substring(prefix.Length).Trim();
+        int separator = content.IndexOf(' ');
         if (separator <= 0)
         {
             return true;
         }
 
-        var target = content.Substring(0, separator).Trim();
-        var style = ParseMermaidStyle(content.Substring(separator + 1));
+        string target = content.Substring(0, separator).Trim();
+        MermaidStyle style = ParseMermaidStyle(content.Substring(separator + 1));
 
-        var node = GetOrCreateMermaidNode(diagram, target, string.Empty, string.Empty, string.Empty);
+        MermaidNode node = GetOrCreateMermaidNode(diagram, target, string.Empty, string.Empty, string.Empty);
         node.InlineStyle = MergeMermaidStyle(node.InlineStyle, style);
         return true;
     }
@@ -1475,19 +1481,19 @@ internal static class MarkdownRenderer
             return false;
         }
 
-        var content = statement.Substring(prefix.Length).Trim();
-        var separator = content.IndexOf(' ');
+        string content = statement.Substring(prefix.Length).Trim();
+        int separator = content.IndexOf(' ');
         if (separator <= 0)
         {
             return true;
         }
 
-        var target = content.Substring(0, separator).Trim();
-        var style = ParseMermaidStyle(content.Substring(separator + 1));
+        string target = content.Substring(0, separator).Trim();
+        MermaidStyle style = ParseMermaidStyle(content.Substring(separator + 1));
         if (string.Equals(target, "default", StringComparison.OrdinalIgnoreCase))
         {
             diagram.DefaultLinkStyle = MergeMermaidStyle(diagram.DefaultLinkStyle, style);
-            foreach (var edge in diagram.Edges)
+            foreach (MermaidEdge edge in diagram.Edges)
             {
                 edge.InlineStyle = MergeMermaidStyle(edge.InlineStyle, style);
             }
@@ -1495,9 +1501,9 @@ internal static class MarkdownRenderer
             return true;
         }
 
-        foreach (var indexToken in target.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+        foreach (string? indexToken in target.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            if (!int.TryParse(indexToken.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var index))
+            if (!int.TryParse(indexToken.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int index))
             {
                 continue;
             }
@@ -1513,30 +1519,30 @@ internal static class MarkdownRenderer
 
     private static bool TryHandleCompoundEdge(MermaidDiagram diagram, string statement, IEnumerable<MermaidSubgraph> activeSubgraphs)
     {
-        var arrowInfo = FindMermaidArrowToken(statement);
+        (string Arrow, int Index)? arrowInfo = FindMermaidArrowToken(statement);
         if (arrowInfo is null)
         {
             return false;
         }
 
-        var (arrow, arrowIndex) = arrowInfo.Value;
-        var leftPart = statement.Substring(0, arrowIndex).Trim();
-        var rightPart = statement.Substring(arrowIndex + arrow.Length).Trim();
+        (string? arrow, int arrowIndex) = arrowInfo.Value;
+        string leftPart = statement.Substring(0, arrowIndex).Trim();
+        string rightPart = statement.Substring(arrowIndex + arrow.Length).Trim();
         if (leftPart.IndexOf('&') < 0 && rightPart.IndexOf('&') < 0)
         {
             return false;
         }
 
-        var sources = ParseCompoundMermaidNodeList(diagram, leftPart, activeSubgraphs);
-        var targets = ParseCompoundMermaidNodeList(diagram, rightPart, activeSubgraphs);
+        List<MermaidNode> sources = ParseCompoundMermaidNodeList(diagram, leftPart, activeSubgraphs);
+        List<MermaidNode> targets = ParseCompoundMermaidNodeList(diagram, rightPart, activeSubgraphs);
         if (sources.Count == 0 || targets.Count == 0)
         {
             return false;
         }
 
-        foreach (var source in sources)
+        foreach (MermaidNode source in sources)
         {
-            foreach (var target in targets)
+            foreach (MermaidNode target in targets)
             {
                 diagram.Edges.Add(CreateMermaidEdge(diagram, source, target, arrow, string.Empty));
             }
@@ -1547,16 +1553,16 @@ internal static class MarkdownRenderer
 
     private static List<MermaidNode> ParseCompoundMermaidNodeList(MermaidDiagram diagram, string segment, IEnumerable<MermaidSubgraph> activeSubgraphs)
     {
-        var nodes = new List<MermaidNode>();
-        foreach (var token in segment.Split(new[] { '&' }, StringSplitOptions.RemoveEmptyEntries))
+        List<MermaidNode> nodes = [];
+        foreach (string? token in segment.Split(new[] { '&' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            var trimmed = token.Trim();
+            string trimmed = token.Trim();
             if (string.IsNullOrWhiteSpace(trimmed))
             {
                 continue;
             }
 
-            var nodeMatch = MermaidNodeRegex.Match(trimmed);
+            Match nodeMatch = MermaidNodeRegex.Match(trimmed);
             if (nodeMatch.Success)
             {
                 nodes.Add(GetOrCreateMermaidNode(
@@ -1577,9 +1583,9 @@ internal static class MarkdownRenderer
 
     private static (string Arrow, int Index)? FindMermaidArrowToken(string statement)
     {
-        foreach (var arrow in new[] { "--.->", "-.->", "-->", "->", "==>", "--x" })
+        foreach (string? arrow in new[] { "--.->", "-.->", "-->", "->", "==>", "--x" })
         {
-            var index = statement.IndexOf(arrow, StringComparison.Ordinal);
+            int index = statement.IndexOf(arrow, StringComparison.Ordinal);
             if (index >= 0)
             {
                 return (arrow, index);
@@ -1599,12 +1605,12 @@ internal static class MarkdownRenderer
 
     private static void ApplyNodeClasses(MermaidDiagram diagram)
     {
-        foreach (var node in diagram.Nodes.Values)
+        foreach (MermaidNode node in diagram.Nodes.Values)
         {
             MermaidStyle? effectiveStyle = null;
-            foreach (var className in node.ClassNames)
+            foreach (string className in node.ClassNames)
             {
-                if (diagram.ClassDefinitions.TryGetValue(className, out var classStyle))
+                if (diagram.ClassDefinitions.TryGetValue(className, out MermaidStyle? classStyle))
                 {
                     effectiveStyle = MergeMermaidStyle(effectiveStyle, classStyle);
                 }
@@ -1616,17 +1622,17 @@ internal static class MarkdownRenderer
 
     private static MermaidStyle ParseMermaidStyle(string styleText)
     {
-        var style = new MermaidStyle();
-        foreach (var entry in styleText.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+        MermaidStyle style = new();
+        foreach (string? entry in styleText.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            var separator = entry.IndexOf(':');
+            int separator = entry.IndexOf(':');
             if (separator <= 0)
             {
                 continue;
             }
 
-            var name = entry.Substring(0, separator).Trim().ToLowerInvariant();
-            var value = entry.Substring(separator + 1).Trim();
+            string name = entry.Substring(0, separator).Trim().ToLowerInvariant();
+            string value = entry.Substring(separator + 1).Trim();
             switch (name)
             {
                 case "fill":
@@ -1639,7 +1645,7 @@ internal static class MarkdownRenderer
                     style.Text = value;
                     break;
                 case "stroke-width":
-                    if (TryParseCssDouble(value, out var strokeWidth))
+                    if (TryParseCssDouble(value, out double strokeWidth))
                     {
                         style.StrokeThickness = strokeWidth;
                     }
@@ -1682,7 +1688,7 @@ internal static class MarkdownRenderer
 
     private static bool TryParseCssDouble(string value, out double result)
     {
-        var normalized = (value ?? string.Empty).Trim();
+        string normalized = (value ?? string.Empty).Trim();
         if (normalized.EndsWith("px", StringComparison.OrdinalIgnoreCase))
         {
             normalized = normalized.Substring(0, normalized.Length - 2);
@@ -1693,9 +1699,9 @@ internal static class MarkdownRenderer
 
     private static string SelectNodeLabel(string id, params string[] labels)
     {
-        foreach (var label in labels)
+        foreach (string label in labels)
         {
-            var normalized = NormalizeMermaidText(label);
+            string normalized = NormalizeMermaidText(label);
             if (!string.IsNullOrWhiteSpace(normalized))
             {
                 return normalized;
@@ -1722,7 +1728,7 @@ internal static class MarkdownRenderer
 
     private static string NormalizeMermaidText(string value)
     {
-        var normalized = (value ?? string.Empty).Trim().Trim('"');
+        string normalized = (value ?? string.Empty).Trim().Trim('"');
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return string.Empty;
@@ -1763,13 +1769,13 @@ internal static class MarkdownRenderer
 
     private static void LayoutMermaidDiagram(MermaidDiagram diagram)
     {
-        var incomingCounts = diagram.Nodes.Keys.ToDictionary(key => key, _ => 0);
-        foreach (var edge in diagram.Edges)
+        Dictionary<string, int> incomingCounts = diagram.Nodes.Keys.ToDictionary(key => key, _ => 0);
+        foreach (MermaidEdge edge in diagram.Edges)
         {
             incomingCounts[edge.To.Id]++;
         }
 
-        var roots = diagram.Nodes.Values
+        List<MermaidNode> roots = diagram.Nodes.Values
             .Where(node => incomingCounts[node.Id] == 0)
             .OrderBy(node => node.Id, StringComparer.Ordinal)
             .ToList();
@@ -1779,21 +1785,21 @@ internal static class MarkdownRenderer
             roots.Add(diagram.Nodes.Values.OrderBy(node => node.Id, StringComparer.Ordinal).First());
         }
 
-        var outgoingByNode = diagram.Edges
+        Dictionary<string, List<MermaidNode>> outgoingByNode = diagram.Edges
             .GroupBy(edge => edge.From.Id, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Select(edge => edge.To).Distinct().ToList(), StringComparer.Ordinal);
 
-        var queue = new Queue<MermaidNode>(roots);
-        var visited = new HashSet<string>(roots.Select(node => node.Id), StringComparer.Ordinal);
+        Queue<MermaidNode> queue = new(roots);
+        HashSet<string> visited = new(roots.Select(node => node.Id), StringComparer.Ordinal);
         while (queue.Count > 0)
         {
-            var current = queue.Dequeue();
-            if (!outgoingByNode.TryGetValue(current.Id, out var children))
+            MermaidNode current = queue.Dequeue();
+            if (!outgoingByNode.TryGetValue(current.Id, out List<MermaidNode>? children))
             {
                 continue;
             }
 
-            foreach (var child in children)
+            foreach (MermaidNode? child in children)
             {
                 if (!visited.Add(child.Id))
                 {
@@ -1805,20 +1811,20 @@ internal static class MarkdownRenderer
             }
         }
 
-        foreach (var node in diagram.Nodes.Values)
+        foreach (MermaidNode node in diagram.Nodes.Values)
         {
             MeasureMermaidNode(node);
         }
 
-        var levelGroups = diagram.Nodes.Values
+        List<IGrouping<int, MermaidNode>> levelGroups = diagram.Nodes.Values
             .GroupBy(node => node.Level)
             .OrderBy(group => group.Key)
             .ToList();
 
         const double minCanvasWidth = 680;
         const double horizontalGap = 104;
-        var widestRow = levelGroups
-            .Select(group => group.Sum(node => node.Width) + Math.Max(0, group.Count() - 1) * horizontalGap)
+        double widestRow = levelGroups
+            .Select(group => group.Sum(node => node.Width) + (Math.Max(0, group.Count() - 1) * horizontalGap))
             .DefaultIfEmpty(minCanvasWidth)
             .Max();
 
@@ -1828,20 +1834,20 @@ internal static class MarkdownRenderer
         const double minVerticalGap = 42;
         const double bottomPadding = 44;
 
-        var currentY = topPadding;
-        var deepestBottom = topPadding;
-        for (var index = 0; index < levelGroups.Count; index++)
+        double currentY = topPadding;
+        double deepestBottom = topPadding;
+        for (int index = 0; index < levelGroups.Count; index++)
         {
-            var group = levelGroups[index];
-            var nodes = group
+            IGrouping<int, MermaidNode> group = levelGroups[index];
+            List<MermaidNode> nodes = group
                 .OrderBy(node => GetMermaidNodeOrder(diagram, node))
                 .ThenBy(node => node.Id, StringComparer.Ordinal)
                 .ToList();
-            var rowHeight = nodes.Max(node => node.Height);
-            var rowWidth = nodes.Sum(node => node.Width) + Math.Max(0, nodes.Count - 1) * horizontalGap;
-            var x = (diagram.CanvasWidth - rowWidth) / 2d;
+            double rowHeight = nodes.Max(node => node.Height);
+            double rowWidth = nodes.Sum(node => node.Width) + (Math.Max(0, nodes.Count - 1) * horizontalGap);
+            double x = (diagram.CanvasWidth - rowWidth) / 2d;
 
-            foreach (var node in nodes)
+            foreach (MermaidNode? node in nodes)
             {
                 node.X = x;
                 node.Y = currentY + ((rowHeight - node.Height) / 2d);
@@ -1861,10 +1867,10 @@ internal static class MarkdownRenderer
 
     private static void MeasureMermaidSubgraphs(MermaidDiagram diagram)
     {
-        foreach (var subgraph in diagram.Subgraphs.OrderByDescending(group => group.Depth))
+        foreach (MermaidSubgraph? subgraph in diagram.Subgraphs.OrderByDescending(group => group.Depth))
         {
-            var memberNodes = subgraph.NodeIds
-                .Select(id => diagram.Nodes.TryGetValue(id, out var node) ? node : null)
+            List<MermaidNode> memberNodes = subgraph.NodeIds
+                .Select(id => diagram.Nodes.TryGetValue(id, out MermaidNode? node) ? node : null)
                 .Where(node => node is not null)
                 .Cast<MermaidNode>()
                 .ToList();
@@ -1878,10 +1884,10 @@ internal static class MarkdownRenderer
             const double topPadding = 34;
             const double bottomPadding = 18;
 
-            var left = memberNodes.Min(node => node.X) - horizontalPadding;
-            var right = memberNodes.Max(node => node.X + node.Width) + horizontalPadding;
-            var top = memberNodes.Min(node => node.Y) - topPadding;
-            var bottom = memberNodes.Max(node => node.Y + node.Height) + bottomPadding;
+            double left = memberNodes.Min(node => node.X) - horizontalPadding;
+            double right = memberNodes.Max(node => node.X + node.Width) + horizontalPadding;
+            double top = memberNodes.Min(node => node.Y) - topPadding;
+            double bottom = memberNodes.Max(node => node.Y + node.Height) + bottomPadding;
 
             subgraph.X = left;
             subgraph.Y = top;
@@ -1895,10 +1901,10 @@ internal static class MarkdownRenderer
 
     private static double GetMermaidInterLevelGap(MermaidDiagram diagram, IReadOnlyCollection<MermaidNode> rowNodes, double minVerticalGap)
     {
-        var rowIds = new HashSet<string>(rowNodes.Select(node => node.Id), StringComparer.Ordinal);
-        var hasOutgoingLabel = diagram.Edges.Any(edge => rowIds.Contains(edge.From.Id) && !string.IsNullOrWhiteSpace(edge.Label));
-        var hasDiamond = rowNodes.Any(node => node.Shape == MermaidNodeShape.Diamond);
-        var extraGap = 0d;
+        HashSet<string> rowIds = new(rowNodes.Select(node => node.Id), StringComparer.Ordinal);
+        bool hasOutgoingLabel = diagram.Edges.Any(edge => rowIds.Contains(edge.From.Id) && !string.IsNullOrWhiteSpace(edge.Label));
+        bool hasDiamond = rowNodes.Any(node => node.Shape == MermaidNodeShape.Diamond);
+        double extraGap = 0d;
 
         if (hasOutgoingLabel)
         {
@@ -1915,7 +1921,7 @@ internal static class MarkdownRenderer
 
     private static double GetMermaidNodeOrder(MermaidDiagram diagram, MermaidNode node)
     {
-        var parents = diagram.Edges
+        List<MermaidNode> parents = diagram.Edges
             .Where(edge => ReferenceEquals(edge.To, node))
             .Select(edge => edge.From)
             .Distinct()
@@ -1928,13 +1934,13 @@ internal static class MarkdownRenderer
             return node.Id[0];
         }
 
-        return parents.Average(parent => (parent.X > 0 ? parent.X : parent.Id[0]));
+        return parents.Average(parent => parent.X > 0 ? parent.X : parent.Id[0]);
     }
 
     private static void MeasureMermaidNode(MermaidNode node)
     {
-        var textLength = Math.Max(4, node.Label.Length);
-        var baseWidth = Math.Min(256, Math.Max(126, textLength * 8 + 44));
+        int textLength = Math.Max(4, node.Label.Length);
+        int baseWidth = Math.Min(256, Math.Max(126, (textLength * 8) + 44));
 
         switch (node.Shape)
         {
@@ -1955,7 +1961,7 @@ internal static class MarkdownRenderer
 
     private static double EstimateMermaidNodeHeight(string label, double textWidth, double baseHeight)
     {
-        var estimatedLineCount = Math.Max(1, (int)Math.Ceiling((Math.Max(1, label.Length) * 7.1) / Math.Max(96d, textWidth)));
+        int estimatedLineCount = Math.Max(1, (int)Math.Ceiling(Math.Max(1, label.Length) * 7.1 / Math.Max(96d, textWidth)));
         return baseHeight + ((estimatedLineCount - 1) * 18d);
     }
 
@@ -1971,7 +1977,7 @@ internal static class MarkdownRenderer
 
     private static FrameworkElement CreateBoxNode(MermaidNode node, double cornerRadius)
     {
-        var style = GetEffectiveNodeStyle(node);
+        MermaidRenderStyle style = GetEffectiveNodeStyle(node);
         return new Border
         {
             Width = node.Width,
@@ -1996,28 +2002,28 @@ internal static class MarkdownRenderer
 
     private static FrameworkElement CreateDiamondNode(MermaidNode node)
     {
-        var style = GetEffectiveNodeStyle(node);
-        var grid = new Grid
+        MermaidRenderStyle style = GetEffectiveNodeStyle(node);
+        Grid grid = new()
         {
             Width = node.Width,
             Height = node.Height
         };
 
-        grid.Children.Add(new Polygon
+        _ = grid.Children.Add(new Polygon
         {
-            Points = new PointCollection
-            {
+            Points =
+            [
                 new(node.Width / 2d, 0),
                 new(node.Width, node.Height / 2d),
                 new(node.Width / 2d, node.Height),
                 new(0, node.Height / 2d)
-            },
+            ],
             Fill = style.Fill,
             Stroke = style.Stroke,
             StrokeThickness = style.StrokeThickness
         });
 
-        grid.Children.Add(new TextBlock
+        _ = grid.Children.Add(new TextBlock
         {
             Text = node.Label,
             Foreground = style.Text,
@@ -2063,7 +2069,7 @@ internal static class MarkdownRenderer
 
     private static MermaidRenderStyle GetEffectiveNodeStyle(MermaidNode node)
     {
-        var style = MergeMermaidStyle(node.ClassStyle, node.InlineStyle);
+        MermaidStyle style = MergeMermaidStyle(node.ClassStyle, node.InlineStyle);
         return new MermaidRenderStyle(
             ToBrush(style.Fill, Color.FromRgb(33, 37, 44)),
             ToBrush(style.Stroke, Color.FromArgb(205, 255, 255, 255)),
@@ -2074,9 +2080,9 @@ internal static class MarkdownRenderer
 
     private static MermaidRenderStyle GetEffectiveEdgeStyle(MermaidEdge edge)
     {
-        var dashed = edge.Arrow.IndexOf('.') >= 0;
-        var thick = edge.Arrow.IndexOf('=') >= 0;
-        var style = edge.InlineStyle;
+        bool dashed = edge.Arrow.IndexOf('.') >= 0;
+        bool thick = edge.Arrow.IndexOf('=') >= 0;
+        MermaidStyle? style = edge.InlineStyle;
         return new MermaidRenderStyle(
             Brushes.Transparent,
             ToBrush(style?.Stroke, Color.FromArgb(220, 255, 255, 255)),
@@ -2094,7 +2100,7 @@ internal static class MarkdownRenderer
 
         try
         {
-            var converter = new BrushConverter();
+            BrushConverter converter = new();
             if (converter.ConvertFromString(value) is Brush brush)
             {
                 return brush;
@@ -2114,11 +2120,11 @@ internal static class MarkdownRenderer
             return null;
         }
 
-        var parts = value.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-        var values = new DoubleCollection();
-        foreach (var part in parts)
+        string[] parts = value.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        DoubleCollection values = [];
+        foreach (string? part in parts)
         {
-            if (TryParseCssDouble(part, out var parsed))
+            if (TryParseCssDouble(part, out double parsed))
             {
                 values.Add(parsed);
             }
@@ -2129,12 +2135,12 @@ internal static class MarkdownRenderer
 
     private static void AddMermaidEdgeVisual(Canvas canvas, MermaidEdge edge)
     {
-        var style = GetEffectiveEdgeStyle(edge);
-        var fromPoint = GetMermaidEdgeStart(edge);
-        var toPoint = GetMermaidEdgeEnd(edge);
-        var route = BuildMermaidEdgeRoute(edge, fromPoint, toPoint);
-        var geometry = CreateMermaidEdgeGeometry(route, out var labelAnchor, out var arrowBasePoint);
-        var path = new Path
+        MermaidRenderStyle style = GetEffectiveEdgeStyle(edge);
+        Point fromPoint = GetMermaidEdgeStart(edge);
+        Point toPoint = GetMermaidEdgeEnd(edge);
+        List<Point> route = BuildMermaidEdgeRoute(edge, fromPoint, toPoint);
+        Geometry geometry = CreateMermaidEdgeGeometry(route, out Point labelAnchor, out Point arrowBasePoint);
+        Path path = new()
         {
             Data = geometry,
             Stroke = style.Stroke,
@@ -2146,15 +2152,15 @@ internal static class MarkdownRenderer
             path.StrokeDashArray = style.StrokeDashArray;
         }
         Panel.SetZIndex(path, 1);
-        canvas.Children.Add(path);
+        _ = canvas.Children.Add(path);
 
-        var arrowHead = CreateArrowHead(arrowBasePoint, toPoint, style.Stroke);
+        Polygon arrowHead = CreateArrowHead(arrowBasePoint, toPoint, style.Stroke);
         Panel.SetZIndex(arrowHead, 2);
-        canvas.Children.Add(arrowHead);
+        _ = canvas.Children.Add(arrowHead);
 
         if (!string.IsNullOrWhiteSpace(edge.Label))
         {
-            var label = new Border
+            Border label = new()
             {
                 Background = new SolidColorBrush(Color.FromArgb(90, 123, 193, 255)),
                 CornerRadius = new CornerRadius(4),
@@ -2168,8 +2174,8 @@ internal static class MarkdownRenderer
             };
 
             label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            var labelYOffset = GetMermaidLabelYOffset(edge, fromPoint, toPoint);
-            var labelPoint = new Point(
+            double labelYOffset = GetMermaidLabelYOffset(edge, fromPoint, toPoint);
+            Point labelPoint = new(
                 labelAnchor.X - (label.DesiredSize.Width / 2d),
                 labelAnchor.Y - label.DesiredSize.Height + labelYOffset);
             labelPoint = AdjustMermaidLabelPoint(edge, fromPoint, toPoint, label, labelPoint);
@@ -2177,13 +2183,13 @@ internal static class MarkdownRenderer
             Canvas.SetLeft(label, labelPoint.X);
             Canvas.SetTop(label, labelPoint.Y);
             Panel.SetZIndex(label, 12);
-            canvas.Children.Add(label);
+            _ = canvas.Children.Add(label);
         }
     }
 
     private static Geometry CreateMermaidEdgeGeometry(IReadOnlyList<Point> route, out Point labelAnchor, out Point arrowBasePoint)
     {
-        var figure = new PathFigure
+        PathFigure figure = new()
         {
             StartPoint = route[0],
             IsClosed = false,
@@ -2191,11 +2197,11 @@ internal static class MarkdownRenderer
         };
 
         const double cornerRadius = 10;
-        for (var index = 1; index < route.Count; index++)
+        for (int index = 1; index < route.Count; index++)
         {
-            var previous = route[index - 1];
-            var current = route[index];
-            var next = index + 1 < route.Count ? route[index + 1] : (Point?)null;
+            Point previous = route[index - 1];
+            Point current = route[index];
+            Point? next = index + 1 < route.Count ? route[index + 1] : null;
 
             if (next is null || !IsOrthogonalTurn(previous, current, next.Value))
             {
@@ -2203,17 +2209,17 @@ internal static class MarkdownRenderer
                 continue;
             }
 
-            var incoming = current - previous;
+            Vector incoming = current - previous;
             incoming.Normalize();
-            var outgoing = next.Value - current;
+            Vector outgoing = next.Value - current;
             outgoing.Normalize();
 
-            var incomingLength = Distance(previous, current);
-            var outgoingLength = Distance(current, next.Value);
-            var radius = Math.Min(cornerRadius, Math.Min(incomingLength, outgoingLength) / 2d);
+            double incomingLength = Distance(previous, current);
+            double outgoingLength = Distance(current, next.Value);
+            double radius = Math.Min(cornerRadius, Math.Min(incomingLength, outgoingLength) / 2d);
 
-            var lineEnd = current - (incoming * radius);
-            var lineStart = current + (outgoing * radius);
+            Point lineEnd = current - (incoming * radius);
+            Point lineStart = current + (outgoing * radius);
             figure.Segments.Add(new LineSegment(lineEnd, true));
             figure.Segments.Add(new QuadraticBezierSegment(current, lineStart, true));
         }
@@ -2226,8 +2232,8 @@ internal static class MarkdownRenderer
 
     private static Point GetMermaidLabelAnchor(IReadOnlyList<Point> route)
     {
-        var totalLength = 0d;
-        for (var index = 1; index < route.Count; index++)
+        double totalLength = 0d;
+        for (int index = 1; index < route.Count; index++)
         {
             totalLength += Distance(route[index - 1], route[index]);
         }
@@ -2237,16 +2243,16 @@ internal static class MarkdownRenderer
             return route[0];
         }
 
-        var halfway = totalLength / 2d;
-        var traversed = 0d;
-        for (var index = 1; index < route.Count; index++)
+        double halfway = totalLength / 2d;
+        double traversed = 0d;
+        for (int index = 1; index < route.Count; index++)
         {
-            var start = route[index - 1];
-            var end = route[index];
-            var segmentLength = Distance(start, end);
+            Point start = route[index - 1];
+            Point end = route[index];
+            double segmentLength = Distance(start, end);
             if (traversed + segmentLength >= halfway)
             {
-                var t = (halfway - traversed) / Math.Max(0.001, segmentLength);
+                double t = (halfway - traversed) / Math.Max(0.001, segmentLength);
                 return GetLinePoint(start, end, t);
             }
 
@@ -2277,7 +2283,7 @@ internal static class MarkdownRenderer
 
         if (edge.From.Shape == MermaidNodeShape.Diamond)
         {
-            var horizontalNudge = toPoint.X < fromPoint.X ? -6d : 6d;
+            double horizontalNudge = toPoint.X < fromPoint.X ? -6d : 6d;
             return new Point(
                 labelPoint.X + horizontalNudge,
                 labelPoint.Y - 2d);
@@ -2295,67 +2301,67 @@ internal static class MarkdownRenderer
 
     private static Point GetMermaidEdgeStart(MermaidEdge edge)
     {
-        var sourceSide = ResolveMermaidExitSide(edge.From, edge.To);
+        MermaidNodeSide sourceSide = ResolveMermaidExitSide(edge.From, edge.To);
         return GetMermaidNodeAnchor(edge.From, sourceSide);
     }
 
     private static Point GetMermaidEdgeEnd(MermaidEdge edge)
     {
-        var targetSide = ResolveMermaidEntrySide(edge.From, edge.To);
+        MermaidNodeSide targetSide = ResolveMermaidEntrySide(edge.From, edge.To);
         return GetMermaidNodeAnchor(edge.To, targetSide);
     }
 
     private static Polygon CreateArrowHead(Point fromPoint, Point toPoint, Brush fill)
     {
-        var vector = fromPoint - toPoint;
+        Vector vector = fromPoint - toPoint;
         if (vector.Length < 0.001)
         {
             return new Polygon
             {
-                Points = new PointCollection()
+                Points = []
             };
         }
 
         vector.Normalize();
 
-        var perpendicular = new Vector(-vector.Y, vector.X);
+        Vector perpendicular = new(-vector.Y, vector.X);
         const double arrowLength = 10;
         const double arrowWidth = 4;
 
-        var basePoint = toPoint + (vector * arrowLength);
+        Point basePoint = toPoint + (vector * arrowLength);
 
         return new Polygon
         {
             Fill = fill,
-            Points = new PointCollection
-            {
+            Points =
+            [
                 toPoint,
                 basePoint + (perpendicular * arrowWidth),
                 basePoint - (perpendicular * arrowWidth)
-            }
+            ]
         };
     }
 
     private static List<Point> BuildMermaidEdgeRoute(MermaidEdge edge, Point fromPoint, Point toPoint)
     {
-        var sourceSide = ResolveMermaidExitSide(edge.From, edge.To);
-        var targetSide = ResolveMermaidEntrySide(edge.From, edge.To);
+        MermaidNodeSide sourceSide = ResolveMermaidExitSide(edge.From, edge.To);
+        MermaidNodeSide targetSide = ResolveMermaidEntrySide(edge.From, edge.To);
         const double offset = 18;
 
-        var exitPoint = OffsetMermaidPoint(fromPoint, sourceSide, offset);
-        var entryPoint = OffsetMermaidPoint(toPoint, targetSide, offset);
-        var route = new List<Point> { fromPoint, exitPoint };
+        Point exitPoint = OffsetMermaidPoint(fromPoint, sourceSide, offset);
+        Point entryPoint = OffsetMermaidPoint(toPoint, targetSide, offset);
+        List<Point> route = [fromPoint, exitPoint];
 
-        var verticalFlow = sourceSide is MermaidNodeSide.Bottom or MermaidNodeSide.Top;
+        bool verticalFlow = sourceSide is MermaidNodeSide.Bottom or MermaidNodeSide.Top;
         if (verticalFlow)
         {
-            var midY = (exitPoint.Y + entryPoint.Y) / 2d;
+            double midY = (exitPoint.Y + entryPoint.Y) / 2d;
             route.Add(new Point(exitPoint.X, midY));
             route.Add(new Point(entryPoint.X, midY));
         }
         else
         {
-            var midX = (exitPoint.X + entryPoint.X) / 2d;
+            double midX = (exitPoint.X + entryPoint.X) / 2d;
             route.Add(new Point(midX, exitPoint.Y));
             route.Add(new Point(midX, entryPoint.Y));
         }
@@ -2367,8 +2373,8 @@ internal static class MarkdownRenderer
 
     private static List<Point> SimplifyMermaidRoute(IReadOnlyList<Point> points)
     {
-        var simplified = new List<Point>();
-        foreach (var point in points)
+        List<Point> simplified = [];
+        foreach (Point point in points)
         {
             if (simplified.Count == 0 || Distance(simplified[simplified.Count - 1], point) > 0.5)
             {
@@ -2376,11 +2382,11 @@ internal static class MarkdownRenderer
             }
         }
 
-        for (var index = simplified.Count - 2; index >= 1; index--)
+        for (int index = simplified.Count - 2; index >= 1; index--)
         {
-            var previous = simplified[index - 1];
-            var current = simplified[index];
-            var next = simplified[index + 1];
+            Point previous = simplified[index - 1];
+            Point current = simplified[index];
+            Point next = simplified[index + 1];
             if ((Math.Abs(previous.X - current.X) < 0.5 && Math.Abs(current.X - next.X) < 0.5) ||
                 (Math.Abs(previous.Y - current.Y) < 0.5 && Math.Abs(current.Y - next.Y) < 0.5))
             {
@@ -2393,7 +2399,7 @@ internal static class MarkdownRenderer
 
     private static MermaidNodeSide ResolveMermaidExitSide(MermaidNode from, MermaidNode to)
     {
-        var delta = GetMermaidNodeCenter(to) - GetMermaidNodeCenter(from);
+        Vector delta = GetMermaidNodeCenter(to) - GetMermaidNodeCenter(from);
         if (Math.Abs(delta.Y) >= Math.Abs(delta.X) * 0.75)
         {
             return delta.Y >= 0 ? MermaidNodeSide.Bottom : MermaidNodeSide.Top;
@@ -2404,7 +2410,7 @@ internal static class MarkdownRenderer
 
     private static MermaidNodeSide ResolveMermaidEntrySide(MermaidNode from, MermaidNode to)
     {
-        var delta = GetMermaidNodeCenter(to) - GetMermaidNodeCenter(from);
+        Vector delta = GetMermaidNodeCenter(to) - GetMermaidNodeCenter(from);
         if (Math.Abs(delta.Y) >= Math.Abs(delta.X) * 0.75)
         {
             return delta.Y >= 0 ? MermaidNodeSide.Top : MermaidNodeSide.Bottom;
@@ -2415,7 +2421,7 @@ internal static class MarkdownRenderer
 
     private static Point GetMermaidNodeAnchor(MermaidNode node, MermaidNodeSide side)
     {
-        var center = GetMermaidNodeCenter(node);
+        Point center = GetMermaidNodeCenter(node);
         if (node.Shape == MermaidNodeShape.Diamond)
         {
             return side switch
@@ -2454,30 +2460,30 @@ internal static class MarkdownRenderer
 
     private static bool IsOrthogonalTurn(Point previous, Point current, Point next)
     {
-        var previousVertical = Math.Abs(previous.X - current.X) < 0.5;
-        var nextVertical = Math.Abs(current.X - next.X) < 0.5;
-        var previousHorizontal = Math.Abs(previous.Y - current.Y) < 0.5;
-        var nextHorizontal = Math.Abs(current.Y - next.Y) < 0.5;
+        bool previousVertical = Math.Abs(previous.X - current.X) < 0.5;
+        bool nextVertical = Math.Abs(current.X - next.X) < 0.5;
+        bool previousHorizontal = Math.Abs(previous.Y - current.Y) < 0.5;
+        bool nextHorizontal = Math.Abs(current.Y - next.Y) < 0.5;
         return (previousVertical && nextHorizontal) || (previousHorizontal && nextVertical);
     }
 
     private static double Distance(Point a, Point b)
     {
-        var dx = a.X - b.X;
-        var dy = a.Y - b.Y;
+        double dx = a.X - b.X;
+        double dy = a.Y - b.Y;
         return Math.Sqrt((dx * dx) + (dy * dy));
     }
 
     private static Brush CreateMermaidCanvasBackground()
     {
-        var brush = new SolidColorBrush(Color.FromRgb(58, 58, 58));
+        SolidColorBrush brush = new(Color.FromRgb(58, 58, 58));
         brush.Freeze();
         return brush;
     }
 
     private static SolidColorBrush CreateBrush(Color color)
     {
-        var brush = new SolidColorBrush(color);
+        SolidColorBrush brush = new(color);
         brush.Freeze();
         return brush;
     }
@@ -2505,7 +2511,7 @@ internal static class MarkdownRenderer
     {
         try
         {
-            var themedColor = VSColorTheme.GetThemedColor(key);
+            System.Drawing.Color themedColor = VSColorTheme.GetThemedColor(key);
             return Color.FromArgb(themedColor.A, themedColor.R, themedColor.G, themedColor.B);
         }
         catch
@@ -2516,7 +2522,7 @@ internal static class MarkdownRenderer
 
     private static string NormalizeMermaidEdgeLine(string rawLine)
     {
-        var line = (rawLine ?? string.Empty).Trim();
+        string line = (rawLine ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(line))
         {
             return string.Empty;
@@ -2525,14 +2531,14 @@ internal static class MarkdownRenderer
         if (line.StartsWith("graph ", StringComparison.OrdinalIgnoreCase) ||
             line.StartsWith("flowchart ", StringComparison.OrdinalIgnoreCase))
         {
-            var separatorIndex = line.IndexOf(' ');
+            int separatorIndex = line.IndexOf(' ');
             if (separatorIndex >= 0)
             {
                 line = line.Substring(separatorIndex + 1).TrimStart();
             }
         }
 
-        foreach (var direction in new[] { "TD ", "TB ", "BT ", "LR ", "RL " })
+        foreach (string? direction in new[] { "TD ", "TB ", "BT ", "LR ", "RL " })
         {
             if (line.StartsWith(direction, StringComparison.OrdinalIgnoreCase))
             {
@@ -2546,7 +2552,7 @@ internal static class MarkdownRenderer
 
     private static string GetLanguageDisplayName(string? language)
     {
-        var normalized = (language ?? string.Empty).Trim();
+        string normalized = (language ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return Localization.MermaidCodeLabel;
@@ -2581,7 +2587,7 @@ internal static class MarkdownRenderer
 
     private static FenceHeader ParseFenceHeader(string line)
     {
-        var info = line.TrimStart();
+        string info = line.TrimStart();
         if (!info.StartsWith("```", StringComparison.Ordinal))
         {
             return new FenceHeader(string.Empty, string.Empty);
@@ -2595,18 +2601,18 @@ internal static class MarkdownRenderer
 
         if (info.StartsWith("mermaid", StringComparison.OrdinalIgnoreCase))
         {
-            var remainder = info.Substring("mermaid".Length).TrimStart();
+            string remainder = info.Substring("mermaid".Length).TrimStart();
             return new FenceHeader("mermaid", remainder);
         }
 
-        var separatorIndex = info.IndexOfAny(new[] { ' ', '\t' });
+        int separatorIndex = info.IndexOfAny(new[] { ' ', '\t' });
         if (separatorIndex < 0)
         {
             return new FenceHeader(info.Trim(), string.Empty);
         }
 
-        var language = info.Substring(0, separatorIndex).Trim();
-        var inlineContent = info.Substring(separatorIndex + 1).TrimStart();
+        string language = info.Substring(0, separatorIndex).Trim();
+        string inlineContent = info.Substring(separatorIndex + 1).TrimStart();
         return new FenceHeader(language, inlineContent);
     }
 
@@ -2616,27 +2622,27 @@ internal static class MarkdownRenderer
 
         public InlineMatch(int index, int length, Func<Inline> inlineFactory)
         {
-            Index = index;
-            Length = length;
-            _inlineFactory = inlineFactory;
+            this.Index = index;
+            this.Length = length;
+            this._inlineFactory = inlineFactory;
         }
 
         public int Index { get; }
 
         public int Length { get; }
 
-        public Inline ToInline() => _inlineFactory();
+        public Inline ToInline() => this._inlineFactory();
     }
 
     private sealed class MermaidDiagram
     {
         public Dictionary<string, MermaidNode> Nodes { get; } = new(StringComparer.Ordinal);
 
-        public List<MermaidEdge> Edges { get; } = new();
+        public List<MermaidEdge> Edges { get; } = [];
 
         public Dictionary<string, MermaidStyle> ClassDefinitions { get; } = new(StringComparer.Ordinal);
 
-        public List<MermaidSubgraph> Subgraphs { get; } = new();
+        public List<MermaidSubgraph> Subgraphs { get; } = [];
 
         public MermaidStyle? DefaultLinkStyle { get; set; }
 
@@ -2649,9 +2655,9 @@ internal static class MarkdownRenderer
     {
         public MermaidNode(string id, string label, MermaidNodeShape shape)
         {
-            Id = id;
-            Label = label;
-            Shape = shape;
+            this.Id = id;
+            this.Label = label;
+            this.Shape = shape;
         }
 
         public string Id { get; }
@@ -2660,7 +2666,7 @@ internal static class MarkdownRenderer
 
         public MermaidNodeShape Shape { get; set; }
 
-        public List<string> ClassNames { get; } = new();
+        public List<string> ClassNames { get; } = [];
 
         public MermaidStyle? ClassStyle { get; set; }
 
@@ -2681,10 +2687,10 @@ internal static class MarkdownRenderer
     {
         public MermaidEdge(MermaidNode from, MermaidNode to, string arrow, string label)
         {
-            From = from;
-            To = to;
-            Arrow = arrow;
-            Label = label;
+            this.From = from;
+            this.To = to;
+            this.Arrow = arrow;
+            this.Label = label;
         }
 
         public MermaidNode From { get; }
@@ -2702,8 +2708,8 @@ internal static class MarkdownRenderer
     {
         public MermaidSubgraph(string id, string label)
         {
-            Id = id;
-            Label = label;
+            this.Id = id;
+            this.Label = label;
         }
 
         public string Id { get; }
@@ -2741,11 +2747,11 @@ internal static class MarkdownRenderer
         {
             return new MermaidStyle
             {
-                Fill = Fill,
-                Stroke = Stroke,
-                Text = Text,
-                StrokeThickness = StrokeThickness,
-                StrokeDashArray = StrokeDashArray
+                Fill = this.Fill,
+                Stroke = this.Stroke,
+                Text = this.Text,
+                StrokeThickness = this.StrokeThickness,
+                StrokeDashArray = this.StrokeDashArray
             };
         }
     }
@@ -2754,11 +2760,11 @@ internal static class MarkdownRenderer
     {
         public MermaidRenderStyle(Brush fill, Brush stroke, Brush text, double strokeThickness, DoubleCollection? strokeDashArray)
         {
-            Fill = fill;
-            Stroke = stroke;
-            Text = text;
-            StrokeThickness = strokeThickness;
-            StrokeDashArray = strokeDashArray;
+            this.Fill = fill;
+            this.Stroke = stroke;
+            this.Text = text;
+            this.StrokeThickness = strokeThickness;
+            this.StrokeDashArray = strokeDashArray;
         }
 
         public Brush Fill { get; }
@@ -2800,30 +2806,30 @@ internal static class MarkdownRenderer
             Color codePropertyColor,
             Color codeKeywordColor)
         {
-            WindowBackgroundColor = windowBackgroundColor;
-            PrimaryTextColor = primaryTextColor;
-            LinkColor = linkColor;
-            InlineCodeBackgroundColor = inlineCodeBackgroundColor;
-            InlineCodeBorderColor = inlineCodeBorderColor;
-            BlockBackgroundColor = blockBackgroundColor;
-            BlockBorderColor = blockBorderColor;
-            BadgeBackgroundColor = badgeBackgroundColor;
-            BadgeBorderColor = badgeBorderColor;
-            IconHoverBackgroundColor = iconHoverBackgroundColor;
-            IconHoverBorderColor = iconHoverBorderColor;
-            IconPressedBackgroundColor = iconPressedBackgroundColor;
-            IconPressedBorderColor = iconPressedBorderColor;
-            ToggleTrackOnColor = toggleTrackOnColor;
-            ToggleTrackOnBorderColor = toggleTrackOnBorderColor;
-            ToggleTrackOffColor = toggleTrackOffColor;
-            ToggleTrackOffBorderColor = toggleTrackOffBorderColor;
-            ToggleThumbColor = toggleThumbColor;
-            ToggleThumbBorderColor = toggleThumbBorderColor;
-            CodeCommentColor = codeCommentColor;
-            CodeStringColor = codeStringColor;
-            CodeNumberColor = codeNumberColor;
-            CodePropertyColor = codePropertyColor;
-            CodeKeywordColor = codeKeywordColor;
+            this.WindowBackgroundColor = windowBackgroundColor;
+            this.PrimaryTextColor = primaryTextColor;
+            this.LinkColor = linkColor;
+            this.InlineCodeBackgroundColor = inlineCodeBackgroundColor;
+            this.InlineCodeBorderColor = inlineCodeBorderColor;
+            this.BlockBackgroundColor = blockBackgroundColor;
+            this.BlockBorderColor = blockBorderColor;
+            this.BadgeBackgroundColor = badgeBackgroundColor;
+            this.BadgeBorderColor = badgeBorderColor;
+            this.IconHoverBackgroundColor = iconHoverBackgroundColor;
+            this.IconHoverBorderColor = iconHoverBorderColor;
+            this.IconPressedBackgroundColor = iconPressedBackgroundColor;
+            this.IconPressedBorderColor = iconPressedBorderColor;
+            this.ToggleTrackOnColor = toggleTrackOnColor;
+            this.ToggleTrackOnBorderColor = toggleTrackOnBorderColor;
+            this.ToggleTrackOffColor = toggleTrackOffColor;
+            this.ToggleTrackOffBorderColor = toggleTrackOffBorderColor;
+            this.ToggleThumbColor = toggleThumbColor;
+            this.ToggleThumbBorderColor = toggleThumbBorderColor;
+            this.CodeCommentColor = codeCommentColor;
+            this.CodeStringColor = codeStringColor;
+            this.CodeNumberColor = codeNumberColor;
+            this.CodePropertyColor = codePropertyColor;
+            this.CodeKeywordColor = codeKeywordColor;
         }
 
         public Color WindowBackgroundColor { get; }
@@ -2876,32 +2882,32 @@ internal static class MarkdownRenderer
 
         public static MarkdownRenderTheme Create(Brush? foreground)
         {
-            var windowBackground = GetThemedColor(EnvironmentColors.ToolWindowBackgroundColorKey, Colors.Black);
-            var primaryText = ToColor(foreground, GetThemedColor(EnvironmentColors.ToolWindowTextColorKey, Colors.White));
-            var linkColor = GetThemedColor(EnvironmentColors.PanelHyperlinkColorKey, Color.FromRgb(0, 122, 204));
-            var accentColor = GetThemedColor(EnvironmentColors.CommandBarHoverColorKey, linkColor);
-            var isDark = GetPerceivedBrightness(windowBackground) < 0.5d;
+            Color windowBackground = GetThemedColor(EnvironmentColors.ToolWindowBackgroundColorKey, Colors.Black);
+            Color primaryText = ToColor(foreground, GetThemedColor(EnvironmentColors.ToolWindowTextColorKey, Colors.White));
+            Color linkColor = GetThemedColor(EnvironmentColors.PanelHyperlinkColorKey, Color.FromRgb(0, 122, 204));
+            Color accentColor = GetThemedColor(EnvironmentColors.CommandBarHoverColorKey, linkColor);
+            bool isDark = GetPerceivedBrightness(windowBackground) < 0.5d;
 
-            var inlineCodeBackground = Blend(windowBackground, primaryText, isDark ? 0.12d : 0.06d);
-            var inlineCodeBorder = Blend(windowBackground, primaryText, isDark ? 0.22d : 0.14d);
-            var blockBackground = Blend(windowBackground, primaryText, isDark ? 0.10d : 0.05d);
-            var blockBorder = Blend(windowBackground, primaryText, isDark ? 0.18d : 0.12d);
-            var badgeBackground = Blend(windowBackground, primaryText, isDark ? 0.14d : 0.07d);
-            var badgeBorder = Blend(windowBackground, primaryText, isDark ? 0.22d : 0.14d);
-            var iconHoverBackground = Blend(windowBackground, primaryText, isDark ? 0.14d : 0.08d);
-            var iconHoverBorder = Blend(windowBackground, primaryText, isDark ? 0.22d : 0.14d);
-            var iconPressedBackground = Blend(windowBackground, primaryText, isDark ? 0.20d : 0.12d);
-            var iconPressedBorder = Blend(windowBackground, primaryText, isDark ? 0.28d : 0.18d);
-            var toggleTrackOff = Blend(windowBackground, primaryText, isDark ? 0.16d : 0.10d);
-            var toggleTrackOffBorder = Blend(windowBackground, primaryText, isDark ? 0.24d : 0.16d);
-            var toggleThumb = Blend(windowBackground, primaryText, isDark ? 0.92d : 0.01d);
-            var toggleThumbBorder = Blend(windowBackground, primaryText, isDark ? 0.12d : 0.24d);
+            Color inlineCodeBackground = Blend(windowBackground, primaryText, isDark ? 0.12d : 0.06d);
+            Color inlineCodeBorder = Blend(windowBackground, primaryText, isDark ? 0.22d : 0.14d);
+            Color blockBackground = Blend(windowBackground, primaryText, isDark ? 0.10d : 0.05d);
+            Color blockBorder = Blend(windowBackground, primaryText, isDark ? 0.18d : 0.12d);
+            Color badgeBackground = Blend(windowBackground, primaryText, isDark ? 0.14d : 0.07d);
+            Color badgeBorder = Blend(windowBackground, primaryText, isDark ? 0.22d : 0.14d);
+            Color iconHoverBackground = Blend(windowBackground, primaryText, isDark ? 0.14d : 0.08d);
+            Color iconHoverBorder = Blend(windowBackground, primaryText, isDark ? 0.22d : 0.14d);
+            Color iconPressedBackground = Blend(windowBackground, primaryText, isDark ? 0.20d : 0.12d);
+            Color iconPressedBorder = Blend(windowBackground, primaryText, isDark ? 0.28d : 0.18d);
+            Color toggleTrackOff = Blend(windowBackground, primaryText, isDark ? 0.16d : 0.10d);
+            Color toggleTrackOffBorder = Blend(windowBackground, primaryText, isDark ? 0.24d : 0.16d);
+            Color toggleThumb = Blend(windowBackground, primaryText, isDark ? 0.92d : 0.01d);
+            Color toggleThumbBorder = Blend(windowBackground, primaryText, isDark ? 0.12d : 0.24d);
 
-            var codeComment = isDark ? Color.FromRgb(106, 153, 85) : Color.FromRgb(0, 128, 0);
-            var codeString = isDark ? Color.FromRgb(206, 145, 120) : Color.FromRgb(163, 21, 21);
-            var codeNumber = isDark ? Color.FromRgb(181, 206, 168) : Color.FromRgb(9, 128, 88);
-            var codeProperty = isDark ? Color.FromRgb(156, 220, 254) : Color.FromRgb(0, 26, 193);
-            var codeKeyword = isDark ? Color.FromRgb(86, 156, 214) : Color.FromRgb(0, 0, 255);
+            Color codeComment = isDark ? Color.FromRgb(106, 153, 85) : Color.FromRgb(0, 128, 0);
+            Color codeString = isDark ? Color.FromRgb(206, 145, 120) : Color.FromRgb(163, 21, 21);
+            Color codeNumber = isDark ? Color.FromRgb(181, 206, 168) : Color.FromRgb(9, 128, 88);
+            Color codeProperty = isDark ? Color.FromRgb(156, 220, 254) : Color.FromRgb(0, 26, 193);
+            Color codeKeyword = isDark ? Color.FromRgb(86, 156, 214) : Color.FromRgb(0, 0, 255);
 
             return new MarkdownRenderTheme(
                 windowBackground,
@@ -2950,8 +2956,8 @@ internal static class MarkdownRenderer
     {
         public FenceHeader(string language, string inlineContent)
         {
-            Language = language;
-            InlineContent = inlineContent;
+            this.Language = language;
+            this.InlineContent = inlineContent;
         }
 
         public string Language { get; }

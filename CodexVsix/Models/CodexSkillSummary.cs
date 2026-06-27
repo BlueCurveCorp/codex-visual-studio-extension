@@ -5,8 +5,6 @@ namespace CodexVsix.Models;
 
 public sealed class CodexSkillSummary : INotifyPropertyChanged
 {
-    private bool _isEnabled;
-
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public string Name { get; set; } = string.Empty;
@@ -21,16 +19,16 @@ public sealed class CodexSkillSummary : INotifyPropertyChanged
 
     public bool IsEnabled
     {
-        get => _isEnabled;
+        get;
         set
         {
-            if (_isEnabled == value)
+            if (field == value)
             {
                 return;
             }
 
-            _isEnabled = value;
-            OnPropertyChanged();
+            field = value;
+            this.OnPropertyChanged();
         }
     }
 
@@ -38,9 +36,9 @@ public sealed class CodexSkillSummary : INotifyPropertyChanged
 
     public string ScopeLabel { get; set; } = string.Empty;
 
-    public string DisplayTitle => string.IsNullOrWhiteSpace(DisplayName) ? Name : DisplayName;
+    public string DisplayTitle => string.IsNullOrWhiteSpace(this.DisplayName) ? this.Name : this.DisplayName;
 
-    public string Summary => !string.IsNullOrWhiteSpace(ShortDescription) ? ShortDescription : Description;
+    public string Summary => !string.IsNullOrWhiteSpace(this.ShortDescription) ? this.ShortDescription : this.Description;
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
     {

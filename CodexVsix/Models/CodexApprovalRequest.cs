@@ -24,5 +24,5 @@ public sealed class CodexApprovalRequest
 
     public string? ProposedExecpolicyLabel { get; set; }
 
-    public IReadOnlyList<CodexApprovalOption> Options { get; set; } = new List<CodexApprovalOption>();
+    public IReadOnlyList<CodexApprovalOption> Options { get; set; } = [];
 }

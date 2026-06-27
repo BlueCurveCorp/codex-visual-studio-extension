@@ -1,10 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
-using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -14,11 +14,15 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+
 using CodexVsix.Models;
 using CodexVsix.Services;
 using CodexVsix.UI;
-using Microsoft.Win32;
+
 using Microsoft.VisualStudio.Shell;
+using Microsoft.Win32;
+
 using Newtonsoft.Json.Linq;
 
 namespace CodexVsix.ViewModels;
@@ -34,8 +38,6 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     private const string SettingsSectionMcp = "mcp";
     private const string SettingsSectionSkills = "skills";
     private const string SettingsSectionLanguage = "language";
-
-    private LocalizationService _localization;
     private readonly ExtensionSettingsStore _settingsStore = new();
     private readonly CodexProcessService _codexProcessService = new();
     private readonly CodexEnvironmentService _codexEnvironmentService = new();
@@ -49,271 +51,259 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     private ChatMessage? _currentTransientStatusMessage;
     private bool _assistantOutputFlushScheduled;
     private long _assistantOutputBufferVersion;
-    private bool _isBusy;
-    private bool _isStopping;
     private bool _hideRecentTasksPreview;
     private bool _pinRecentTasksPreview;
-    private bool _showExpandedRecentTasksPreview;
-    private bool _showHistoryPanel;
-    private bool _showSettingsPanel;
     private string _prompt = string.Empty;
     private string _promptEditorText = string.Empty;
     private string _output = string.Empty;
-    private string _currentMentionQuery = string.Empty;
     private string _selectedModel = string.Empty;
     private string _selectedReasoningEffort = string.Empty;
     private string _selectedVerbosity = string.Empty;
-    private string _promptDisplayText = string.Empty;
-    private Geometry _contextRingGeometry = Geometry.Parse("M 8,1 A 7,7 0 1 1 7.99,1");
     private const double ContextWindowBaselineTokens = 12000d;
     private double _contextTokenBudget = DefaultContextTokenBudget;
     private double _lastKnownContextTokensInWindow;
     private double _lastKnownRemainingTokens = DefaultContextTokenBudget - ContextWindowBaselineTokens;
-    private ApprovalPromptViewModel? _currentApprovalPrompt;
     private TaskCompletionSource<JToken?>? _approvalDecisionTcs;
-    private UserInputPromptViewModel? _currentUserInputPrompt;
     private TaskCompletionSource<JObject?>? _userInputDecisionTcs;
-    private CodexThreadSummary? _selectedThread;
     private bool _suppressThreadSelection;
-    private string _renameThreadName = string.Empty;
-    private string _editingThreadId = string.Empty;
-    private string _newSkillName = string.Empty;
-    private string _newSkillDescription = string.Empty;
-    private string _skillSearchText = string.Empty;
-    private string _historySearchText = string.Empty;
-    private string _languageSearchText = string.Empty;
-    private string _selectedSettingsSection = string.Empty;
-    private CodexRateLimitSummary _rateLimitSummary = new();
-    private CodexEnvironmentStatus _codexEnvironmentStatus = new() { Stage = CodexSetupStage.Checking };
-    private bool _hasCompletedEnvironmentCheck;
     private bool _hasLoadedStartupSurfaces;
     private bool _isToolWindowStartupRefreshInProgress;
-    private bool _isRefreshingModels;
-    private string _modelRefreshStatus = string.Empty;
-    private string _customModelInput = string.Empty;
     private long _conversationStateVersion;
 
     public CodexToolWindowViewModel()
     {
         ThreadHelper.ThrowIfNotOnUIThread();
-        Settings = _settingsStore.Load();
-        EnsureSettingsCollectionsInitialized();
-        _localization = new LocalizationService(Settings.LanguageOverride);
+        this.Settings = this._settingsStore.Load();
+        this.EnsureSettingsCollectionsInitialized();
+        this.Localization = new LocalizationService(this.Settings.LanguageOverride);
 
-        if (string.IsNullOrWhiteSpace(Settings.DefaultModel)) Settings.DefaultModel = "gpt-5.4";
-        if (string.IsNullOrWhiteSpace(Settings.ReasoningEffort)) Settings.ReasoningEffort = "high";
-        if (string.IsNullOrWhiteSpace(Settings.ModelVerbosity)) Settings.ModelVerbosity = "medium";
-        if (string.IsNullOrWhiteSpace(Settings.SandboxMode)) Settings.SandboxMode = "read-only";
-        NormalizeSelectionSettings();
-        ApplyStartupWorkingDirectory();
+        if (string.IsNullOrWhiteSpace(this.Settings.DefaultModel))
+        {
+            this.Settings.DefaultModel = "gpt-5.4";
+        }
 
-        _selectedModel = Settings.DefaultModel;
-        _selectedReasoningEffort = Settings.ReasoningEffort;
-        _selectedVerbosity = Settings.ModelVerbosity;
-        _codexProcessService.ApprovalRequestHandler = HandleApprovalRequestAsync;
-        _codexProcessService.UserInputRequestHandler = HandleUserInputRequestAsync;
-        _codexProcessService.ThreadCatalogChanged += HandleThreadCatalogChanged;
-        _codexProcessService.RateLimitsUpdated += HandleRateLimitsUpdated;
-        _codexProcessService.AccountUpdated += HandleAccountUpdated;
+        if (string.IsNullOrWhiteSpace(this.Settings.ReasoningEffort))
+        {
+            this.Settings.ReasoningEffort = "high";
+        }
 
-        SendCommand = new DelegateCommand(Send, () => !IsBusy && IsCodexReady && !string.IsNullOrWhiteSpace(BuildEffectivePrompt()));
-        CancelCommand = new DelegateCommand(Cancel, () => IsBusy && !IsStopping);
-        SaveSettingsCommand = new DelegateCommand(ApplySettings);
-        ClearOutputCommand = new DelegateCommand(() => Output = string.Empty);
-        UseSolutionDirectoryCommand = new DelegateCommand(UseSolutionDirectory);
-        OpenCodexConfigCommand = new DelegateCommand(OpenCodexConfig);
-        OpenExtensionSettingsCommand = new DelegateCommand(OpenExtensionSettings);
-        OpenCodexSkillsFolderCommand = new DelegateCommand(OpenCodexSkillsFolder);
-        OpenCodexDocsCommand = new DelegateCommand(OpenCodexDocs);
-        OpenKeyboardShortcutsCommand = new DelegateCommand(OpenKeyboardShortcuts);
-        OpenPathCommand = new DelegateCommand(OpenPath);
-        OpenReferencedPathCommand = new DelegateCommand(OpenReferencedPath, CanOpenReferencedPath);
-        RefreshCodexStatusCommand = new DelegateCommand(RefreshCodexStatus);
-        RunCodexLoginCommand = new DelegateCommand(RunCodexLogin, _ => CanRunCodexLogin);
-        CopyCodexInstallCommand = new DelegateCommand(CopyCodexInstallCommandText);
-        OpenSettingsPanelCommand = new DelegateCommand(OpenSettingsPanel);
-        RefreshIntegrationsCommand = new DelegateCommand(RefreshIntegrations);
-        AddManagedMcpCommand = new DelegateCommand(AddManagedMcp);
-        RemoveManagedMcpCommand = new DelegateCommand(RemoveManagedMcp);
-        RefreshModelsCommand = new DelegateCommand(RefreshModels, _ => !IsRefreshingModels);
-        AddCustomModelCommand = new DelegateCommand(AddCustomModel, _ => !string.IsNullOrWhiteSpace(CustomModelInput) || !string.IsNullOrWhiteSpace(SelectedModel));
-        RemoveCustomModelCommand = new DelegateCommand(RemoveCustomModel);
-        CreateSkillCommand = new DelegateCommand(CreateSkill, _ => CanCreateSkill());
-        PasteImageCommand = new DelegateCommand(PasteImageFromClipboard);
-        AddImageFileCommand = new DelegateCommand(AddAttachment);
-        RemoveSelectedImageCommand = new DelegateCommand(RemoveSelectedImage, () => SelectedImagePath is not null);
-        RemoveAttachmentCommand = new DelegateCommand(RemoveAttachment);
-        RemoveDetectedPromptSkillCommand = new DelegateCommand(RemoveDetectedPromptSkill);
-        InsertSelectedMentionCommand = new DelegateCommand(InsertSelectedMention, () => SelectedMention is not null);
-        ReuseHistoryPromptCommand = new DelegateCommand(ReuseHistoryPrompt, () => SelectedHistoryPrompt is not null);
-        NewThreadCommand = new DelegateCommand(StartNewThread, () => IsCodexReady && !IsStopping);
-        DismissRecentTasksPreviewCommand = new DelegateCommand(DismissRecentTasksPreview);
-        BeginRenameThreadCommand = new DelegateCommand(BeginRenameThread, parameter => !IsBusy && parameter is CodexThreadSummary);
-        RenameThreadCommand = new DelegateCommand(RenameSelectedThread, CanRenameThread);
-        CancelRenameThreadCommand = new DelegateCommand(CancelRenameThread, _ => !string.IsNullOrWhiteSpace(EditingThreadId));
-        DeleteThreadCommand = new DelegateCommand(DeleteThread, parameter => !IsBusy && parameter is CodexThreadSummary);
-        OpenHistoryPanelCommand = new DelegateCommand(OpenHistoryPanel);
-        ToggleHistoryPanelCommand = new DelegateCommand(ToggleHistoryPanel);
-        ToggleSettingsPanelCommand = new DelegateCommand(ToggleSettingsPanel);
-        CloseSettingsDetailCommand = new DelegateCommand(CloseSettingsDetail);
-        CloseSidebarCommand = new DelegateCommand(CloseSidebar);
-        SelectSettingsSectionCommand = new DelegateCommand(SelectSettingsSection);
-        TogglePreferredMcpCommand = new DelegateCommand(TogglePreferredMcp);
-        SelectReasoningEffortCommand = new DelegateCommand(SelectReasoningEffort);
-        SelectVerbosityCommand = new DelegateCommand(SelectVerbosity);
-        SelectApprovalPolicyCommand = new DelegateCommand(SelectApprovalPolicy);
-        SelectSandboxModeCommand = new DelegateCommand(SelectSandboxMode);
-        ToggleSkillEnabledCommand = new DelegateCommand(ToggleSkillEnabled);
-        InstallRemoteSkillCommand = new DelegateCommand(InstallRemoteSkill);
-        SelectLanguageCommand = new DelegateCommand(SelectLanguage);
-        LogOutCommand = new DelegateCommand(LogOut, _ => CanLogOutAndLogIn);
-        LogOutAndLoginCommand = new DelegateCommand(LogOutAndLogin, _ => CanLogOutAndLogIn);
-        ResolveApprovalCommand = new DelegateCommand(ResolveApproval);
-        ResolveUserInputCommand = new DelegateCommand(ResolveUserInput);
+        if (string.IsNullOrWhiteSpace(this.Settings.ModelVerbosity))
+        {
+            this.Settings.ModelVerbosity = "medium";
+        }
 
-        ReplaceModelOptions(MergeModelOptions(
+        if (string.IsNullOrWhiteSpace(this.Settings.SandboxMode))
+        {
+            this.Settings.SandboxMode = "read-only";
+        }
+
+        this.NormalizeSelectionSettings();
+        this.ApplyStartupWorkingDirectory();
+
+        this._selectedModel = this.Settings.DefaultModel;
+        this._selectedReasoningEffort = this.Settings.ReasoningEffort;
+        this._selectedVerbosity = this.Settings.ModelVerbosity;
+        this._codexProcessService.ApprovalRequestHandler = this.HandleApprovalRequestAsync;
+        this._codexProcessService.UserInputRequestHandler = this.HandleUserInputRequestAsync;
+        this._codexProcessService.ThreadCatalogChanged += this.HandleThreadCatalogChanged;
+        this._codexProcessService.RateLimitsUpdated += this.HandleRateLimitsUpdated;
+        this._codexProcessService.AccountUpdated += this.HandleAccountUpdated;
+
+        this.SendCommand = new DelegateCommand(this.Send, () => !this.IsBusy && this.IsCodexReady && !string.IsNullOrWhiteSpace(this.BuildEffectivePrompt()));
+        this.CancelCommand = new DelegateCommand(this.Cancel, () => this.IsBusy && !this.IsStopping);
+        this.SaveSettingsCommand = new DelegateCommand(this.ApplySettings);
+        this.ClearOutputCommand = new DelegateCommand(() => this.Output = string.Empty);
+        this.UseSolutionDirectoryCommand = new DelegateCommand(this.UseSolutionDirectory);
+        this.OpenCodexConfigCommand = new DelegateCommand(this.OpenCodexConfig);
+        this.OpenExtensionSettingsCommand = new DelegateCommand(this.OpenExtensionSettings);
+        this.OpenCodexSkillsFolderCommand = new DelegateCommand(this.OpenCodexSkillsFolder);
+        this.OpenCodexDocsCommand = new DelegateCommand(this.OpenCodexDocs);
+        this.OpenKeyboardShortcutsCommand = new DelegateCommand(this.OpenKeyboardShortcuts);
+        this.OpenPathCommand = new DelegateCommand(this.OpenPath);
+        this.OpenReferencedPathCommand = new DelegateCommand(this.OpenReferencedPath, this.CanOpenReferencedPath);
+        this.RefreshCodexStatusCommand = new DelegateCommand(this.RefreshCodexStatus);
+        this.RunCodexLoginCommand = new DelegateCommand(this.RunCodexLogin, _ => this.CanRunCodexLogin);
+        this.CopyCodexInstallCommand = new DelegateCommand(this.CopyCodexInstallCommandText);
+        this.OpenSettingsPanelCommand = new DelegateCommand(this.OpenSettingsPanel);
+        this.RefreshIntegrationsCommand = new DelegateCommand(this.RefreshIntegrations);
+        this.AddManagedMcpCommand = new DelegateCommand(this.AddManagedMcp);
+        this.RemoveManagedMcpCommand = new DelegateCommand(this.RemoveManagedMcp);
+        this.RefreshModelsCommand = new DelegateCommand(this.RefreshModels, _ => !this.IsRefreshingModels);
+        this.AddCustomModelCommand = new DelegateCommand(this.AddCustomModel, _ => !string.IsNullOrWhiteSpace(this.CustomModelInput) || !string.IsNullOrWhiteSpace(this.SelectedModel));
+        this.RemoveCustomModelCommand = new DelegateCommand(this.RemoveCustomModel);
+        this.CreateSkillCommand = new DelegateCommand(this.CreateSkill, _ => this.CanCreateSkill());
+        this.PasteImageCommand = new DelegateCommand(this.PasteImageFromClipboard);
+        this.AddImageFileCommand = new DelegateCommand(this.AddAttachment);
+        this.RemoveSelectedImageCommand = new DelegateCommand(this.RemoveSelectedImage, () => this.SelectedImagePath is not null);
+        this.RemoveAttachmentCommand = new DelegateCommand(this.RemoveAttachment);
+        this.RemoveDetectedPromptSkillCommand = new DelegateCommand(this.RemoveDetectedPromptSkill);
+        this.InsertSelectedMentionCommand = new DelegateCommand(this.InsertSelectedMention, () => this.SelectedMention is not null);
+        this.ReuseHistoryPromptCommand = new DelegateCommand(this.ReuseHistoryPrompt, () => this.SelectedHistoryPrompt is not null);
+        this.NewThreadCommand = new DelegateCommand(this.StartNewThread, () => this.IsCodexReady && !this.IsStopping);
+        this.DismissRecentTasksPreviewCommand = new DelegateCommand(this.DismissRecentTasksPreview);
+        this.BeginRenameThreadCommand = new DelegateCommand(this.BeginRenameThread, parameter => !this.IsBusy && parameter is CodexThreadSummary);
+        this.RenameThreadCommand = new DelegateCommand(this.RenameSelectedThread, this.CanRenameThread);
+        this.CancelRenameThreadCommand = new DelegateCommand(this.CancelRenameThread, _ => !string.IsNullOrWhiteSpace(this.EditingThreadId));
+        this.DeleteThreadCommand = new DelegateCommand(this.DeleteThread, parameter => !this.IsBusy && parameter is CodexThreadSummary);
+        this.OpenHistoryPanelCommand = new DelegateCommand(this.OpenHistoryPanel);
+        this.ToggleHistoryPanelCommand = new DelegateCommand(this.ToggleHistoryPanel);
+        this.ToggleSettingsPanelCommand = new DelegateCommand(this.ToggleSettingsPanel);
+        this.CloseSettingsDetailCommand = new DelegateCommand(this.CloseSettingsDetail);
+        this.CloseSidebarCommand = new DelegateCommand(this.CloseSidebar);
+        this.SelectSettingsSectionCommand = new DelegateCommand(this.SelectSettingsSection);
+        this.TogglePreferredMcpCommand = new DelegateCommand(this.TogglePreferredMcp);
+        this.SelectReasoningEffortCommand = new DelegateCommand(this.SelectReasoningEffort);
+        this.SelectVerbosityCommand = new DelegateCommand(this.SelectVerbosity);
+        this.SelectApprovalPolicyCommand = new DelegateCommand(this.SelectApprovalPolicy);
+        this.SelectSandboxModeCommand = new DelegateCommand(this.SelectSandboxMode);
+        this.ToggleSkillEnabledCommand = new DelegateCommand(this.ToggleSkillEnabled);
+        this.InstallRemoteSkillCommand = new DelegateCommand(this.InstallRemoteSkill);
+        this.SelectLanguageCommand = new DelegateCommand(this.SelectLanguage);
+        this.LogOutCommand = new DelegateCommand(this.LogOut, _ => this.CanLogOutAndLogIn);
+        this.LogOutAndLoginCommand = new DelegateCommand(this.LogOutAndLogin, _ => this.CanLogOutAndLogIn);
+        this.ResolveApprovalCommand = new DelegateCommand(this.ResolveApproval);
+        this.ResolveUserInputCommand = new DelegateCommand(this.ResolveUserInput);
+
+        this.ReplaceModelOptions(MergeModelOptions(
             Enumerable.Empty<SelectionOption>(),
             CreateFallbackModelOptions(),
-            Settings.CustomModels,
-            _selectedModel));
+            this.Settings.CustomModels,
+            this._selectedModel));
 
-        foreach (var item in GetRecentPromptHistory())
+        foreach (string item in this.GetRecentPromptHistory())
         {
-            PromptHistory.Add(item);
+            this.PromptHistory.Add(item);
         }
 
-        foreach (var server in Settings.ManagedMcpServers)
+        foreach (CodexManagedMcpServer server in this.Settings.ManagedMcpServers)
         {
-            ManagedMcpServers.Add(CloneManagedMcpServer(server));
+            this.ManagedMcpServers.Add(CloneManagedMcpServer(server));
         }
 
-        ManagedMcpServers.CollectionChanged += HandleManagedMcpServersChanged;
-        Skills.CollectionChanged += HandleSkillsChanged;
-        McpServers.CollectionChanged += HandleMcpServersChanged;
-        Threads.CollectionChanged += HandleThreadsChanged;
-        Messages.CollectionChanged += HandleMessagesChanged;
+        this.ManagedMcpServers.CollectionChanged += this.HandleManagedMcpServersChanged;
+        this.Skills.CollectionChanged += this.HandleSkillsChanged;
+        this.McpServers.CollectionChanged += this.HandleMcpServersChanged;
+        this.Threads.CollectionChanged += this.HandleThreadsChanged;
+        this.Messages.CollectionChanged += this.HandleMessagesChanged;
 
-        RefreshMentions();
-        UpdateContextEstimate();
-        ThreadHelper.JoinableTaskFactory.RunAsync(InitializeSafeAsync);
+        this.RefreshMentions();
+        this.UpdateContextEstimate();
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(this.InitializeSafeAsync);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public LocalizationService Localization => _localization;
+    public LocalizationService Localization { get; private set; }
 
     public void Dispose()
     {
-        _approvalDecisionTcs?.TrySetResult(JValue.CreateString("cancel"));
-        _userInputDecisionTcs?.TrySetResult(new JObject { ["answers"] = new JObject() });
-        _cts?.Cancel();
-        _cts?.Dispose();
-        ClearPendingAssistantOutput();
-        ManagedMcpServers.CollectionChanged -= HandleManagedMcpServersChanged;
-        Skills.CollectionChanged -= HandleSkillsChanged;
-        McpServers.CollectionChanged -= HandleMcpServersChanged;
-        Threads.CollectionChanged -= HandleThreadsChanged;
-        Messages.CollectionChanged -= HandleMessagesChanged;
-        _codexProcessService.ThreadCatalogChanged -= HandleThreadCatalogChanged;
-        _codexProcessService.RateLimitsUpdated -= HandleRateLimitsUpdated;
-        _codexProcessService.AccountUpdated -= HandleAccountUpdated;
-        _codexProcessService.Dispose();
+        _ = (this._approvalDecisionTcs?.TrySetResult(JValue.CreateString("cancel")));
+        _ = (this._userInputDecisionTcs?.TrySetResult(new JObject { ["answers"] = new JObject() }));
+        this._cts?.Cancel();
+        this._cts?.Dispose();
+        this.ClearPendingAssistantOutput();
+        this.ManagedMcpServers.CollectionChanged -= this.HandleManagedMcpServersChanged;
+        this.Skills.CollectionChanged -= this.HandleSkillsChanged;
+        this.McpServers.CollectionChanged -= this.HandleMcpServersChanged;
+        this.Threads.CollectionChanged -= this.HandleThreadsChanged;
+        this.Messages.CollectionChanged -= this.HandleMessagesChanged;
+        this._codexProcessService.ThreadCatalogChanged -= this.HandleThreadCatalogChanged;
+        this._codexProcessService.RateLimitsUpdated -= this.HandleRateLimitsUpdated;
+        this._codexProcessService.AccountUpdated -= this.HandleAccountUpdated;
+        this._codexProcessService.Dispose();
     }
 
     public CodexExtensionSettings Settings { get; }
 
-    public ObservableCollection<string> MentionSuggestions { get; } = new();
-    public ObservableCollection<string> AttachedImages { get; } = new();
-    public ObservableCollection<string> PromptHistory { get; } = new();
-    public ObservableCollection<CodexThreadSummary> Threads { get; } = new();
-    public ObservableCollection<CodexAppSummary> Apps { get; } = new();
-    public ObservableCollection<CodexMcpServerSummary> McpServers { get; } = new();
-    public ObservableCollection<CodexManagedMcpServer> ManagedMcpServers { get; } = new();
-    public ObservableCollection<CodexSkillSummary> Skills { get; } = new();
-    public ObservableCollection<CodexRemoteSkillSummary> RemoteSkills { get; } = new();
-    public ObservableCollection<CodexSkillSummary> DetectedPromptSkills { get; } = new();
-    public ObservableRangeCollection<ChatMessage> Messages { get; } = new();
-    public ObservableCollection<SelectionOption> ModelOptions { get; } = new();
+    public ObservableCollection<string> MentionSuggestions { get; } = [];
+    public ObservableCollection<string> AttachedImages { get; } = [];
+    public ObservableCollection<string> PromptHistory { get; } = [];
+    public ObservableCollection<CodexThreadSummary> Threads { get; } = [];
+    public ObservableCollection<CodexAppSummary> Apps { get; } = [];
+    public ObservableCollection<CodexMcpServerSummary> McpServers { get; } = [];
+    public ObservableCollection<CodexManagedMcpServer> ManagedMcpServers { get; } = [];
+    public ObservableCollection<CodexSkillSummary> Skills { get; } = [];
+    public ObservableCollection<CodexRemoteSkillSummary> RemoteSkills { get; } = [];
+    public ObservableCollection<CodexSkillSummary> DetectedPromptSkills { get; } = [];
+    public ObservableRangeCollection<ChatMessage> Messages { get; } = [];
+    public ObservableCollection<SelectionOption> ModelOptions { get; } = [];
 
     public bool IsRefreshingModels
     {
-        get => _isRefreshingModels;
-        private set
+        get; private set
         {
-            if (_isRefreshingModels == value)
+            if (field == value)
             {
                 return;
             }
 
-            _isRefreshingModels = value;
-            OnPropertyChanged();
-            RefreshModelsCommand?.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.RefreshModelsCommand?.RaiseCanExecuteChanged();
         }
     }
 
     public string ModelRefreshStatus
     {
-        get => _modelRefreshStatus;
-        private set
+        get; private set
         {
             value ??= string.Empty;
-            if (string.Equals(_modelRefreshStatus, value, StringComparison.Ordinal))
+            if (string.Equals(field, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _modelRefreshStatus = value;
-            OnPropertyChanged();
+            field = value;
+            this.OnPropertyChanged();
         }
-    }
+    } = string.Empty;
 
     public string CustomModelInput
     {
-        get => _customModelInput;
-        set
+        get; set
         {
             value ??= string.Empty;
-            if (string.Equals(_customModelInput, value, StringComparison.Ordinal))
+            if (string.Equals(field, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _customModelInput = value;
-            OnPropertyChanged();
-            AddCustomModelCommand?.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.AddCustomModelCommand?.RaiseCanExecuteChanged();
         }
-    }
+    } = string.Empty;
 
     public SelectionOption[] ReasoningOptions => MergeConfigurableOptions(
-        _localization.CreateReasoningOptions(),
-        Settings.CustomReasoningEfforts,
-        SelectedReasoningEffort).ToArray();
+        this.Localization.CreateReasoningOptions(),
+        this.Settings.CustomReasoningEfforts,
+        this.SelectedReasoningEffort).ToArray();
 
     public SelectionOption[] ReasoningMenuOptions => new[]
     {
-        new SelectionOption(_localization.ReasoningEffortLabel, "__label")
-    }.Concat(ReasoningOptions).ToArray();
+        new SelectionOption(this.Localization.ReasoningEffortLabel, "__label")
+    }.Concat(this.ReasoningOptions).ToArray();
 
     public SelectionOption[] VerbosityOptions => MergeConfigurableOptions(
-        _localization.CreateVerbosityOptions(),
-        Settings.CustomVerbosityOptions,
-        SelectedVerbosity).ToArray();
+        this.Localization.CreateVerbosityOptions(),
+        this.Settings.CustomVerbosityOptions,
+        this.SelectedVerbosity).ToArray();
 
     public SelectionOption[] ServiceTierOptions => MergeConfigurableOptions(
-        _localization.CreateServiceTierOptions(),
-        Settings.CustomServiceTiers,
-        SelectedServiceTier).ToArray();
+        this.Localization.CreateServiceTierOptions(),
+        this.Settings.CustomServiceTiers,
+        this.SelectedServiceTier).ToArray();
 
-    public SelectionOption[] ApprovalPolicyOptions => _localization.CreateApprovalPolicyOptions();
+    public SelectionOption[] ApprovalPolicyOptions => this.Localization.CreateApprovalPolicyOptions();
 
-    public SelectionOption[] SandboxModeOptions => _localization.CreateSandboxModeOptions();
+    public SelectionOption[] SandboxModeOptions => this.Localization.CreateSandboxModeOptions();
 
-    public SelectionOption[] LanguageOptions => _localization.CreateLanguageOptions();
+    public SelectionOption[] LanguageOptions => this.Localization.CreateLanguageOptions();
 
     public SelectionOption[] McpTransportOptions => new[]
     {
-        new SelectionOption(_localization.ManagedMcpStdioOption, "stdio"),
-        new SelectionOption(_localization.ManagedMcpUrlOption, "url")
+        new SelectionOption(this.Localization.ManagedMcpStdioOption, "stdio"),
+        new SelectionOption(this.Localization.ManagedMcpUrlOption, "url")
     };
 
     public DelegateCommand SendCommand { get; }
@@ -373,986 +363,961 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     public string Prompt
     {
-        get => _prompt;
-        set => RunOnUiThread(() => ApplyRawPrompt(value));
+        get => this._prompt;
+        set => RunOnUiThread(() => { Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread(); this.ApplyRawPrompt(value); });
     }
 
     public string PromptEditorText
     {
-        get => _promptEditorText;
-        set => RunOnUiThread(() => ApplyPromptEditorText(value));
+        get => this._promptEditorText;
+        set => RunOnUiThread(() => { Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread(); this.ApplyPromptEditorText(value); });
     }
 
     public string Output
     {
-        get => _output;
+        get => this._output;
         set => RunOnUiThread(() =>
         {
-            _output = value;
-            OnPropertyChanged();
+            this._output = value;
+            this.OnPropertyChanged();
         });
     }
 
     public bool IsBusy
     {
-        get => _isBusy;
-        private set
+        get; private set
         {
-            _isBusy = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(PrimaryActionCommand));
-            OnPropertyChanged(nameof(PrimaryActionTooltip));
-            OnPropertyChanged(nameof(ShowSendActionIcon));
-            OnPropertyChanged(nameof(ShowStopActionIcon));
-            OnPropertyChanged(nameof(ShowStoppingIndicator));
-            SendCommand.RaiseCanExecuteChanged();
-            CancelCommand.RaiseCanExecuteChanged();
-            NewThreadCommand.RaiseCanExecuteChanged();
-            BeginRenameThreadCommand.RaiseCanExecuteChanged();
-            RenameThreadCommand.RaiseCanExecuteChanged();
-            CancelRenameThreadCommand.RaiseCanExecuteChanged();
-            DeleteThreadCommand.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.PrimaryActionCommand));
+            this.OnPropertyChanged(nameof(this.PrimaryActionTooltip));
+            this.OnPropertyChanged(nameof(this.ShowSendActionIcon));
+            this.OnPropertyChanged(nameof(this.ShowStopActionIcon));
+            this.OnPropertyChanged(nameof(this.ShowStoppingIndicator));
+            this.SendCommand.RaiseCanExecuteChanged();
+            this.CancelCommand.RaiseCanExecuteChanged();
+            this.NewThreadCommand.RaiseCanExecuteChanged();
+            this.BeginRenameThreadCommand.RaiseCanExecuteChanged();
+            this.RenameThreadCommand.RaiseCanExecuteChanged();
+            this.CancelRenameThreadCommand.RaiseCanExecuteChanged();
+            this.DeleteThreadCommand.RaiseCanExecuteChanged();
         }
     }
 
     public bool IsStopping
     {
-        get => _isStopping;
-        private set
+        get; private set
         {
-            if (_isStopping == value)
+            if (field == value)
             {
                 return;
             }
 
-            _isStopping = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(PrimaryActionCommand));
-            OnPropertyChanged(nameof(PrimaryActionTooltip));
-            OnPropertyChanged(nameof(ShowSendActionIcon));
-            OnPropertyChanged(nameof(ShowStopActionIcon));
-            OnPropertyChanged(nameof(ShowStoppingIndicator));
-            CancelCommand.RaiseCanExecuteChanged();
-            NewThreadCommand.RaiseCanExecuteChanged();
-            DeleteThreadCommand.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.PrimaryActionCommand));
+            this.OnPropertyChanged(nameof(this.PrimaryActionTooltip));
+            this.OnPropertyChanged(nameof(this.ShowSendActionIcon));
+            this.OnPropertyChanged(nameof(this.ShowStopActionIcon));
+            this.OnPropertyChanged(nameof(this.ShowStoppingIndicator));
+            this.CancelCommand.RaiseCanExecuteChanged();
+            this.NewThreadCommand.RaiseCanExecuteChanged();
+            this.DeleteThreadCommand.RaiseCanExecuteChanged();
         }
     }
 
     public bool ShowHistoryPanel
     {
-        get => _showHistoryPanel;
-        set
+        get; set
         {
-            _showHistoryPanel = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(IsSidebarExpanded));
-            OnPropertyChanged(nameof(SidebarWidth));
-            OnPropertyChanged(nameof(IsHistoryViewSelected));
-            OnPropertyChanged(nameof(IsSettingsViewSelected));
-            OnPropertyChanged(nameof(ShowRecentTasksPreview));
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.IsSidebarExpanded));
+            this.OnPropertyChanged(nameof(this.SidebarWidth));
+            this.OnPropertyChanged(nameof(this.IsHistoryViewSelected));
+            this.OnPropertyChanged(nameof(this.IsSettingsViewSelected));
+            this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
         }
     }
 
     public bool ShowSettingsPanel
     {
-        get => _showSettingsPanel;
-        set
+        get; set
         {
-            _showSettingsPanel = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(IsSidebarExpanded));
-            OnPropertyChanged(nameof(SidebarWidth));
-            OnPropertyChanged(nameof(IsHistoryViewSelected));
-            OnPropertyChanged(nameof(IsSettingsViewSelected));
-            OnPropertyChanged(nameof(ShowRecentTasksPreview));
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.IsSidebarExpanded));
+            this.OnPropertyChanged(nameof(this.SidebarWidth));
+            this.OnPropertyChanged(nameof(this.IsHistoryViewSelected));
+            this.OnPropertyChanged(nameof(this.IsSettingsViewSelected));
+            this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
         }
     }
 
-    public bool IsSidebarExpanded => ShowHistoryPanel || ShowSettingsPanel;
+    public bool IsSidebarExpanded => this.ShowHistoryPanel || this.ShowSettingsPanel;
 
-    public double SidebarWidth => IsSidebarExpanded ? 292d : 0d;
+    public double SidebarWidth => this.IsSidebarExpanded ? 292d : 0d;
 
-    public bool IsHistoryViewSelected => ShowHistoryPanel || (_pinRecentTasksPreview && ShowRecentTasksPreview);
+    public bool IsHistoryViewSelected => this.ShowHistoryPanel || (this._pinRecentTasksPreview && this.ShowRecentTasksPreview);
 
-    public bool IsSettingsViewSelected => ShowSettingsPanel;
+    public bool IsSettingsViewSelected => this.ShowSettingsPanel;
 
     public string CurrentMentionQuery
     {
-        get => _currentMentionQuery;
-        private set
+        get; private set
         {
-            _currentMentionQuery = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(HasMentionSuggestions));
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.HasMentionSuggestions));
         }
-    }
+    } = string.Empty;
 
-    public bool HasMentionSuggestions => MentionSuggestions.Count > 0 && !string.IsNullOrWhiteSpace(CurrentMentionQuery);
+    public bool HasMentionSuggestions => this.MentionSuggestions.Count > 0 && !string.IsNullOrWhiteSpace(this.CurrentMentionQuery);
 
     public ApprovalPromptViewModel? CurrentApprovalPrompt
     {
-        get => _currentApprovalPrompt;
-        private set
+        get; private set
         {
-            _currentApprovalPrompt = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(HasCurrentApprovalPrompt));
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.HasCurrentApprovalPrompt));
         }
     }
 
-    public bool HasCurrentApprovalPrompt => CurrentApprovalPrompt is not null;
+    public bool HasCurrentApprovalPrompt => this.CurrentApprovalPrompt is not null;
 
     public UserInputPromptViewModel? CurrentUserInputPrompt
     {
-        get => _currentUserInputPrompt;
-        private set
+        get; private set
         {
-            _currentUserInputPrompt = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(HasCurrentUserInputPrompt));
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.HasCurrentUserInputPrompt));
         }
     }
 
-    public bool HasCurrentUserInputPrompt => CurrentUserInputPrompt is not null;
+    public bool HasCurrentUserInputPrompt => this.CurrentUserInputPrompt is not null;
 
     public CodexEnvironmentStatus CodexEnvironmentStatus
     {
-        get => _codexEnvironmentStatus;
-        private set
+        get; private set
         {
-            _codexEnvironmentStatus = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(IsCodexReady));
-            OnPropertyChanged(nameof(ShowCodexSetupCard));
-            OnPropertyChanged(nameof(CodexSetupTitle));
-            OnPropertyChanged(nameof(CodexSetupSummary));
-            OnPropertyChanged(nameof(CodexSetupDetail));
-            OnPropertyChanged(nameof(CodexSetupInstallCommand));
-            OnPropertyChanged(nameof(CodexSetupExecutablePath));
-            OnPropertyChanged(nameof(CodexSetupAuthenticationLabel));
-            OnPropertyChanged(nameof(CodexSetupVersionLabel));
-            OnPropertyChanged(nameof(ShowCodexSetupDetail));
-            OnPropertyChanged(nameof(ShowCodexSetupVersion));
-            OnPropertyChanged(nameof(NeedsCodexInstall));
-            OnPropertyChanged(nameof(NeedsCodexLogin));
-            OnPropertyChanged(nameof(CanRunCodexLogin));
-            OnPropertyChanged(nameof(CurrentAccountLabel));
-            OnPropertyChanged(nameof(CanLogOutAndLogIn));
-            SendCommand.RaiseCanExecuteChanged();
-            NewThreadCommand.RaiseCanExecuteChanged();
-            RunCodexLoginCommand.RaiseCanExecuteChanged();
-            LogOutCommand.RaiseCanExecuteChanged();
-            LogOutAndLoginCommand.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.IsCodexReady));
+            this.OnPropertyChanged(nameof(this.ShowCodexSetupCard));
+            this.OnPropertyChanged(nameof(this.CodexSetupTitle));
+            this.OnPropertyChanged(nameof(this.CodexSetupSummary));
+            this.OnPropertyChanged(nameof(this.CodexSetupDetail));
+            this.OnPropertyChanged(nameof(this.CodexSetupInstallCommand));
+            this.OnPropertyChanged(nameof(this.CodexSetupExecutablePath));
+            this.OnPropertyChanged(nameof(this.CodexSetupAuthenticationLabel));
+            this.OnPropertyChanged(nameof(this.CodexSetupVersionLabel));
+            this.OnPropertyChanged(nameof(this.ShowCodexSetupDetail));
+            this.OnPropertyChanged(nameof(this.ShowCodexSetupVersion));
+            this.OnPropertyChanged(nameof(this.NeedsCodexInstall));
+            this.OnPropertyChanged(nameof(this.NeedsCodexLogin));
+            this.OnPropertyChanged(nameof(this.CanRunCodexLogin));
+            this.OnPropertyChanged(nameof(this.CurrentAccountLabel));
+            this.OnPropertyChanged(nameof(this.CanLogOutAndLogIn));
+            this.SendCommand.RaiseCanExecuteChanged();
+            this.NewThreadCommand.RaiseCanExecuteChanged();
+            this.RunCodexLoginCommand.RaiseCanExecuteChanged();
+            this.LogOutCommand.RaiseCanExecuteChanged();
+            this.LogOutAndLoginCommand.RaiseCanExecuteChanged();
         }
-    }
+    } = new() { Stage = CodexSetupStage.Checking };
 
-    public bool IsCodexReady => CodexEnvironmentStatus.IsReady;
+    public bool IsCodexReady => this.CodexEnvironmentStatus.IsReady;
 
     public bool HasCompletedEnvironmentCheck
     {
-        get => _hasCompletedEnvironmentCheck;
-        private set
+        get; private set
         {
-            if (_hasCompletedEnvironmentCheck == value)
+            if (field == value)
             {
                 return;
             }
 
-            _hasCompletedEnvironmentCheck = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(ShowCodexSetupCard));
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.ShowCodexSetupCard));
         }
     }
 
-    public bool ShowCodexSetupCard => HasCompletedEnvironmentCheck
-        && CodexEnvironmentStatus.Stage != CodexSetupStage.Unknown
-        && CodexEnvironmentStatus.Stage != CodexSetupStage.Checking
-        && CodexEnvironmentStatus.Stage != CodexSetupStage.Ready;
+    public bool ShowCodexSetupCard => this.HasCompletedEnvironmentCheck
+        && this.CodexEnvironmentStatus.Stage != CodexSetupStage.Unknown
+        && this.CodexEnvironmentStatus.Stage != CodexSetupStage.Checking
+        && this.CodexEnvironmentStatus.Stage != CodexSetupStage.Ready;
 
-    public bool ShowCodexSetupDetail => !string.IsNullOrWhiteSpace(CodexSetupDetail);
+    public bool ShowCodexSetupDetail => !string.IsNullOrWhiteSpace(this.CodexSetupDetail);
 
-    public bool ShowCodexSetupVersion => !string.IsNullOrWhiteSpace(CodexSetupVersionLabel);
+    public bool ShowCodexSetupVersion => !string.IsNullOrWhiteSpace(this.CodexSetupVersionLabel);
 
-    public bool NeedsCodexInstall => CodexEnvironmentStatus.Stage == CodexSetupStage.MissingExecutable;
+    public bool NeedsCodexInstall => this.CodexEnvironmentStatus.Stage == CodexSetupStage.MissingExecutable;
 
-    public bool NeedsCodexLogin => CodexEnvironmentStatus.Stage == CodexSetupStage.MissingAuthentication
-        && CodexEnvironmentStatus.RequiresOpenaiAuth;
+    public bool NeedsCodexLogin => this.CodexEnvironmentStatus.Stage == CodexSetupStage.MissingAuthentication
+        && this.CodexEnvironmentStatus.RequiresOpenaiAuth;
 
-    public bool CanRunCodexLogin => CodexEnvironmentStatus.Stage == CodexSetupStage.MissingAuthentication
-        && CodexEnvironmentStatus.RequiresOpenaiAuth
-        && !string.IsNullOrWhiteSpace(CodexEnvironmentStatus.ResolvedExecutablePath);
+    public bool CanRunCodexLogin => this.CodexEnvironmentStatus.Stage == CodexSetupStage.MissingAuthentication
+        && this.CodexEnvironmentStatus.RequiresOpenaiAuth
+        && !string.IsNullOrWhiteSpace(this.CodexEnvironmentStatus.ResolvedExecutablePath);
 
-    public bool CanLogOutAndLogIn => !string.IsNullOrWhiteSpace(GetLoginExecutablePath());
+    public bool CanLogOutAndLogIn => !string.IsNullOrWhiteSpace(this.GetLoginExecutablePath());
 
-    public string CodexSetupTitle => CodexEnvironmentStatus.Stage switch
+    public string CodexSetupTitle => this.CodexEnvironmentStatus.Stage switch
     {
-        CodexSetupStage.Checking => _localization.SetupCheckingTitle,
-        CodexSetupStage.MissingExecutable => _localization.SetupMissingExecutableTitle,
-        CodexSetupStage.MissingAuthentication => CodexEnvironmentStatus.RequiresOpenaiAuth
-            ? _localization.SetupMissingAuthTitle
-            : _localization.SetupMissingProviderAuthTitle,
-        CodexSetupStage.Ready => _localization.SetupReadyTitle,
-        CodexSetupStage.Error => _localization.SetupErrorTitle,
-        _ => _localization.SetupCheckingTitle
+        CodexSetupStage.Checking => this.Localization.SetupCheckingTitle,
+        CodexSetupStage.MissingExecutable => this.Localization.SetupMissingExecutableTitle,
+        CodexSetupStage.MissingAuthentication => this.CodexEnvironmentStatus.RequiresOpenaiAuth
+            ? this.Localization.SetupMissingAuthTitle
+            : this.Localization.SetupMissingProviderAuthTitle,
+        CodexSetupStage.Ready => this.Localization.SetupReadyTitle,
+        CodexSetupStage.Error => this.Localization.SetupErrorTitle,
+        _ => this.Localization.SetupCheckingTitle
     };
 
-    public string CodexSetupSummary => CodexEnvironmentStatus.Stage switch
+    public string CodexSetupSummary => this.CodexEnvironmentStatus.Stage switch
     {
-        CodexSetupStage.Checking => _localization.SetupCheckingSummary,
-        CodexSetupStage.MissingExecutable => _localization.SetupMissingExecutableSummary,
-        CodexSetupStage.MissingAuthentication => CodexEnvironmentStatus.RequiresOpenaiAuth
-            ? _localization.SetupMissingAuthSummary
-            : _localization.SetupMissingProviderAuthSummary,
-        CodexSetupStage.Ready => _localization.SetupReadySummary,
-        CodexSetupStage.Error => _localization.SetupErrorSummary,
+        CodexSetupStage.Checking => this.Localization.SetupCheckingSummary,
+        CodexSetupStage.MissingExecutable => this.Localization.SetupMissingExecutableSummary,
+        CodexSetupStage.MissingAuthentication => this.CodexEnvironmentStatus.RequiresOpenaiAuth
+            ? this.Localization.SetupMissingAuthSummary
+            : this.Localization.SetupMissingProviderAuthSummary,
+        CodexSetupStage.Ready => this.Localization.SetupReadySummary,
+        CodexSetupStage.Error => this.Localization.SetupErrorSummary,
         _ => string.Empty
     };
 
-    public string CodexSetupDetail => CodexEnvironmentStatus.Stage switch
+    public string CodexSetupDetail => this.CodexEnvironmentStatus.Stage switch
     {
-        CodexSetupStage.MissingExecutable => _localization.SetupInstallDetail,
-        CodexSetupStage.MissingAuthentication => CodexEnvironmentStatus.RequiresOpenaiAuth
-            ? _localization.SetupMissingAuthDetail
-            : _localization.SetupMissingProviderAuthDetail,
-        CodexSetupStage.Error => CodexEnvironmentStatus.ErrorDetail,
+        CodexSetupStage.MissingExecutable => this.Localization.SetupInstallDetail,
+        CodexSetupStage.MissingAuthentication => this.CodexEnvironmentStatus.RequiresOpenaiAuth
+            ? this.Localization.SetupMissingAuthDetail
+            : this.Localization.SetupMissingProviderAuthDetail,
+        CodexSetupStage.Error => this.CodexEnvironmentStatus.ErrorDetail,
         _ => string.Empty
     };
 
     public string CodexSetupInstallCommand => CodexEnvironmentService.FallbackInstallCommand;
 
-    public string CodexSetupExecutablePath => string.IsNullOrWhiteSpace(CodexEnvironmentStatus.ResolvedExecutablePath)
-        ? CodexEnvironmentStatus.ConfiguredExecutablePath
-        : CodexEnvironmentStatus.ResolvedExecutablePath;
+    public string CodexSetupExecutablePath => string.IsNullOrWhiteSpace(this.CodexEnvironmentStatus.ResolvedExecutablePath)
+        ? this.CodexEnvironmentStatus.ConfiguredExecutablePath
+        : this.CodexEnvironmentStatus.ResolvedExecutablePath;
 
     public string CodexSetupAuthenticationLabel
     {
         get
         {
-            if (!string.IsNullOrWhiteSpace(CodexEnvironmentStatus.AuthenticationLabel))
+            if (!string.IsNullOrWhiteSpace(this.CodexEnvironmentStatus.AuthenticationLabel))
             {
-                return CodexEnvironmentStatus.AuthenticationLabel;
+                return this.CodexEnvironmentStatus.AuthenticationLabel;
             }
 
-            if (CodexEnvironmentStatus.HasApiKey)
+            if (this.CodexEnvironmentStatus.HasApiKey)
             {
-                return _localization.SetupApiKeyLabel;
+                return this.Localization.SetupApiKeyLabel;
             }
 
-            if (CodexEnvironmentStatus.HasAuthFile)
+            if (this.CodexEnvironmentStatus.HasAuthFile)
             {
-                return _localization.SetupAuthFileLabel;
+                return this.Localization.SetupAuthFileLabel;
             }
 
-            return CodexEnvironmentStatus.AuthFilePath;
+            return this.CodexEnvironmentStatus.AuthFilePath;
         }
     }
 
-    public string CodexSetupVersionLabel => CodexEnvironmentStatus.Version;
+    public string CodexSetupVersionLabel => this.CodexEnvironmentStatus.Version;
 
     public string CurrentAccountLabel
     {
         get
         {
-            if (CodexEnvironmentStatus.HasAccountEmail)
+            if (this.CodexEnvironmentStatus.HasAccountEmail)
             {
-                return CodexEnvironmentStatus.AccountEmail;
+                return this.CodexEnvironmentStatus.AccountEmail;
             }
 
-            if (!string.IsNullOrWhiteSpace(CodexEnvironmentStatus.AuthenticationLabel))
+            if (!string.IsNullOrWhiteSpace(this.CodexEnvironmentStatus.AuthenticationLabel))
             {
-                return CodexEnvironmentStatus.AuthenticationLabel;
+                return this.CodexEnvironmentStatus.AuthenticationLabel;
             }
 
-            if (CodexEnvironmentStatus.HasApiKey)
+            if (this.CodexEnvironmentStatus.HasApiKey)
             {
-                return _localization.SetupApiKeyLabel;
+                return this.Localization.SetupApiKeyLabel;
             }
 
-            return _localization.NotSignedInLabel;
+            return this.Localization.NotSignedInLabel;
         }
     }
 
-    public bool HasManagedMcpServers => ManagedMcpServers.Count > 0;
+    public bool HasManagedMcpServers => this.ManagedMcpServers.Count > 0;
 
-    public bool HasDetectedMcpServers => McpServers.Count > 0;
+    public bool HasDetectedMcpServers => this.McpServers.Count > 0;
 
-    public bool HasSkills => Skills.Count > 0;
+    public bool HasSkills => this.Skills.Count > 0;
 
-    public bool HasRemoteSkills => RemoteSkills.Count > 0;
+    public bool HasRemoteSkills => this.RemoteSkills.Count > 0;
 
-    public bool HasDetectedPromptSkills => DetectedPromptSkills.Count > 0;
+    public bool HasDetectedPromptSkills => this.DetectedPromptSkills.Count > 0;
 
     public string PromptDisplayText
     {
-        get => _promptDisplayText;
-        private set
+        get; private set
         {
-            if (string.Equals(_promptDisplayText, value, StringComparison.Ordinal))
+            if (string.Equals(field, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _promptDisplayText = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(HasPromptDisplayText));
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.HasPromptDisplayText));
         }
-    }
+    } = string.Empty;
 
-    public bool HasPromptDisplayText => !string.IsNullOrWhiteSpace(PromptDisplayText);
+    public bool HasPromptDisplayText => !string.IsNullOrWhiteSpace(this.PromptDisplayText);
 
-    public string CodexConfigPath => _solutionContextService.GetCodexConfigPath();
+    public string CodexConfigPath => this._solutionContextService.GetCodexConfigPath();
 
-    public string ExtensionSettingsPath => _settingsStore.SettingsFilePath;
+    public string ExtensionSettingsPath => this._settingsStore.SettingsFilePath;
 
-    public string CodexSkillsDirectory => _solutionContextService.GetCodexSkillsDirectory();
+    public string CodexSkillsDirectory => this._solutionContextService.GetCodexSkillsDirectory();
 
     public string SelectedSettingsSection
     {
-        get => _selectedSettingsSection;
-        private set
+        get; private set
         {
-            if (string.Equals(_selectedSettingsSection, value, StringComparison.Ordinal))
+            if (string.Equals(field, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _selectedSettingsSection = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(IsAccountSectionSelected));
-            OnPropertyChanged(nameof(IsCodexMenuExpanded));
-            OnPropertyChanged(nameof(IsCodexSectionSelected));
-            OnPropertyChanged(nameof(IsIdeSectionSelected));
-            OnPropertyChanged(nameof(IsMcpSectionSelected));
-            OnPropertyChanged(nameof(IsSkillsSectionSelected));
-            OnPropertyChanged(nameof(IsLanguageSectionSelected));
-            OnPropertyChanged(nameof(IsSettingsDetailPanelVisible));
-            OnPropertyChanged(nameof(SelectedSettingsSectionTitle));
+            field = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.IsAccountSectionSelected));
+            this.OnPropertyChanged(nameof(this.IsCodexMenuExpanded));
+            this.OnPropertyChanged(nameof(this.IsCodexSectionSelected));
+            this.OnPropertyChanged(nameof(this.IsIdeSectionSelected));
+            this.OnPropertyChanged(nameof(this.IsMcpSectionSelected));
+            this.OnPropertyChanged(nameof(this.IsSkillsSectionSelected));
+            this.OnPropertyChanged(nameof(this.IsLanguageSectionSelected));
+            this.OnPropertyChanged(nameof(this.IsSettingsDetailPanelVisible));
+            this.OnPropertyChanged(nameof(this.SelectedSettingsSectionTitle));
         }
-    }
+    } = string.Empty;
 
-    public bool IsAccountSectionSelected => string.Equals(SelectedSettingsSection, SettingsSectionAccount, StringComparison.Ordinal);
+    public bool IsAccountSectionSelected => string.Equals(this.SelectedSettingsSection, SettingsSectionAccount, StringComparison.Ordinal);
 
-    public bool IsCodexMenuExpanded => string.Equals(SelectedSettingsSection, SettingsSectionCodexMenu, StringComparison.Ordinal)
-        || IsCodexSectionSelected;
+    public bool IsCodexMenuExpanded => string.Equals(this.SelectedSettingsSection, SettingsSectionCodexMenu, StringComparison.Ordinal)
+        || this.IsCodexSectionSelected;
 
-    public bool IsCodexSectionSelected => string.Equals(SelectedSettingsSection, SettingsSectionCodex, StringComparison.Ordinal);
+    public bool IsCodexSectionSelected => string.Equals(this.SelectedSettingsSection, SettingsSectionCodex, StringComparison.Ordinal);
 
-    public bool IsIdeSectionSelected => string.Equals(SelectedSettingsSection, SettingsSectionIde, StringComparison.Ordinal);
+    public bool IsIdeSectionSelected => string.Equals(this.SelectedSettingsSection, SettingsSectionIde, StringComparison.Ordinal);
 
-    public bool IsMcpSectionSelected => string.Equals(SelectedSettingsSection, SettingsSectionMcp, StringComparison.Ordinal);
+    public bool IsMcpSectionSelected => string.Equals(this.SelectedSettingsSection, SettingsSectionMcp, StringComparison.Ordinal);
 
-    public bool IsSkillsSectionSelected => string.Equals(SelectedSettingsSection, SettingsSectionSkills, StringComparison.Ordinal);
+    public bool IsSkillsSectionSelected => string.Equals(this.SelectedSettingsSection, SettingsSectionSkills, StringComparison.Ordinal);
 
-    public bool IsLanguageSectionSelected => string.Equals(SelectedSettingsSection, SettingsSectionLanguage, StringComparison.Ordinal);
+    public bool IsLanguageSectionSelected => string.Equals(this.SelectedSettingsSection, SettingsSectionLanguage, StringComparison.Ordinal);
 
-    public bool IsSettingsDetailPanelVisible => IsAccountSectionSelected
-        || IsCodexSectionSelected
-        || IsIdeSectionSelected
-        || IsMcpSectionSelected
-        || IsSkillsSectionSelected;
+    public bool IsSettingsDetailPanelVisible => this.IsAccountSectionSelected
+        || this.IsCodexSectionSelected
+        || this.IsIdeSectionSelected
+        || this.IsMcpSectionSelected
+        || this.IsSkillsSectionSelected;
 
-    public string SelectedSettingsSectionTitle => SelectedSettingsSection switch
+    public string SelectedSettingsSectionTitle => this.SelectedSettingsSection switch
     {
-        SettingsSectionAccount => Localization.AccountTitle,
-        SettingsSectionCodex => Localization.CodexSettingsNav,
-        SettingsSectionIde => Localization.IdeSettingsNav,
-        SettingsSectionMcp => Localization.McpSettingsNav,
-        SettingsSectionSkills => Localization.SkillsSettingsNav,
-        _ => Localization.SettingsTitle
+        SettingsSectionAccount => this.Localization.AccountTitle,
+        SettingsSectionCodex => this.Localization.CodexSettingsNav,
+        SettingsSectionIde => this.Localization.IdeSettingsNav,
+        SettingsSectionMcp => this.Localization.McpSettingsNav,
+        SettingsSectionSkills => this.Localization.SkillsSettingsNav,
+        _ => this.Localization.SettingsTitle
     };
 
-    public string SettingsWorkspaceTitle => Localization.CodexSettingsNav;
+    public string SettingsWorkspaceTitle => this.Localization.CodexSettingsNav;
 
     public string SelectedModel
     {
-        get => _selectedModel;
+        get => this._selectedModel;
         set
         {
             value = NormalizeModelValue(value);
-            if (string.Equals(_selectedModel, value, StringComparison.Ordinal))
+            if (string.Equals(this._selectedModel, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _selectedModel = value;
-            Settings.DefaultModel = value;
-            EnsureSelectedModelOption(value);
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(ProfileLabel));
-            OnPropertyChanged(nameof(SelectedModelLabel));
-            AddCustomModelCommand?.RaiseCanExecuteChanged();
-            SaveSettings();
+            this._selectedModel = value;
+            this.Settings.DefaultModel = value;
+            this.EnsureSelectedModelOption(value);
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.ProfileLabel));
+            this.OnPropertyChanged(nameof(this.SelectedModelLabel));
+            this.AddCustomModelCommand?.RaiseCanExecuteChanged();
+            this.SaveSettings();
         }
     }
 
     public string SelectedReasoningEffort
     {
-        get => _selectedReasoningEffort;
+        get => this._selectedReasoningEffort;
         set
         {
             value = NormalizeReasoningEffortValue(value);
-            if (string.Equals(_selectedReasoningEffort, value, StringComparison.Ordinal))
+            if (string.Equals(this._selectedReasoningEffort, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _selectedReasoningEffort = value;
-            Settings.ReasoningEffort = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(ReasoningOptions));
-            OnPropertyChanged(nameof(ReasoningMenuOptions));
-            OnPropertyChanged(nameof(SelectedReasoningEffortLabel));
-            SaveSettings();
+            this._selectedReasoningEffort = value;
+            this.Settings.ReasoningEffort = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.ReasoningOptions));
+            this.OnPropertyChanged(nameof(this.ReasoningMenuOptions));
+            this.OnPropertyChanged(nameof(this.SelectedReasoningEffortLabel));
+            this.SaveSettings();
         }
     }
 
     public string SelectedVerbosity
     {
-        get => _selectedVerbosity;
+        get => this._selectedVerbosity;
         set
         {
-            value = EnsureKnownOrCustomOptionValue(value, VerbosityOptions, "medium");
-            if (string.Equals(_selectedVerbosity, value, StringComparison.Ordinal))
+            value = EnsureKnownOrCustomOptionValue(value, this.VerbosityOptions, "medium");
+            if (string.Equals(this._selectedVerbosity, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _selectedVerbosity = value;
-            Settings.ModelVerbosity = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(VerbosityOptions));
-            OnPropertyChanged(nameof(SelectedVerbosityLabel));
-            SaveSettings();
+            this._selectedVerbosity = value;
+            this.Settings.ModelVerbosity = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.VerbosityOptions));
+            this.OnPropertyChanged(nameof(this.SelectedVerbosityLabel));
+            this.SaveSettings();
         }
     }
 
     public string SelectedSandboxMode
     {
-        get => Settings.SandboxMode;
+        get => this.Settings.SandboxMode;
         set
         {
-            value = EnsureOptionValue(value, SandboxModeOptions, "read-only");
-            if (string.Equals(Settings.SandboxMode, value, StringComparison.Ordinal))
+            value = EnsureOptionValue(value, this.SandboxModeOptions, "read-only");
+            if (string.Equals(this.Settings.SandboxMode, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            Settings.SandboxMode = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(SelectedSandboxModeLabel));
-            SaveSettings();
+            this.Settings.SandboxMode = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.SelectedSandboxModeLabel));
+            this.SaveSettings();
         }
     }
 
     public string SelectedApprovalPolicy
     {
-        get => Settings.ApprovalPolicy;
+        get => this.Settings.ApprovalPolicy;
         set
         {
-            value = EnsureOptionValue(value, ApprovalPolicyOptions, string.Empty);
-            if (string.Equals(Settings.ApprovalPolicy, value, StringComparison.Ordinal))
+            value = EnsureOptionValue(value, this.ApprovalPolicyOptions, string.Empty);
+            if (string.Equals(this.Settings.ApprovalPolicy, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            Settings.ApprovalPolicy = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(SelectedApprovalPolicyLabel));
-            SaveSettings();
+            this.Settings.ApprovalPolicy = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.SelectedApprovalPolicyLabel));
+            this.SaveSettings();
         }
     }
 
-    public string ProfileLabel => string.IsNullOrWhiteSpace(Settings.Profile) ? "develop" : Settings.Profile;
+    public string ProfileLabel => string.IsNullOrWhiteSpace(this.Settings.Profile) ? "develop" : this.Settings.Profile;
 
-    public string CollaborationModeLabel => PlanModeEnabled ? _localization.AgentModeLabel : _localization.QuestionModeLabel;
+    public string CollaborationModeLabel => this.PlanModeEnabled ? this.Localization.AgentModeLabel : this.Localization.QuestionModeLabel;
 
-    public string SelectedModelLabel => GetOptionLabel(ModelOptions, SelectedModel, ModelOptions.FirstOrDefault()?.Label ?? "gpt-5.4");
+    public string SelectedModelLabel => GetOptionLabel(this.ModelOptions, this.SelectedModel, this.ModelOptions.FirstOrDefault()?.Label ?? "gpt-5.4");
 
-    public bool IsFastModeEnabled => string.Equals(SelectedServiceTier, "fast", StringComparison.Ordinal);
+    public bool IsFastModeEnabled => string.Equals(this.SelectedServiceTier, "fast", StringComparison.Ordinal);
 
-    public string SelectedReasoningEffortLabel => GetOptionLabel(ReasoningOptions, SelectedReasoningEffort, ReasoningOptions.FirstOrDefault(option => string.Equals(option.Value, "high", StringComparison.Ordinal))?.Label ?? "high");
+    public string SelectedReasoningEffortLabel => GetOptionLabel(this.ReasoningOptions, this.SelectedReasoningEffort, this.ReasoningOptions.FirstOrDefault(option => string.Equals(option.Value, "high", StringComparison.Ordinal))?.Label ?? "high");
 
-    public string SelectedVerbosityLabel => GetOptionLabel(VerbosityOptions, SelectedVerbosity, VerbosityOptions.FirstOrDefault(option => string.Equals(option.Value, "medium", StringComparison.Ordinal))?.Label ?? "medium");
+    public string SelectedVerbosityLabel => GetOptionLabel(this.VerbosityOptions, this.SelectedVerbosity, this.VerbosityOptions.FirstOrDefault(option => string.Equals(option.Value, "medium", StringComparison.Ordinal))?.Label ?? "medium");
 
     public string SelectedServiceTier
     {
-        get => Settings.ServiceTier;
+        get => this.Settings.ServiceTier;
         set
         {
-            value = EnsureKnownOrCustomOptionValue(value, ServiceTierOptions, string.Empty);
-            if (string.Equals(Settings.ServiceTier, value, StringComparison.Ordinal))
+            value = EnsureKnownOrCustomOptionValue(value, this.ServiceTierOptions, string.Empty);
+            if (string.Equals(this.Settings.ServiceTier, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            Settings.ServiceTier = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(ServiceTierOptions));
-            OnPropertyChanged(nameof(SelectedServiceTierLabel));
-            OnPropertyChanged(nameof(IsFastModeEnabled));
-            SaveSettings();
+            this.Settings.ServiceTier = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.ServiceTierOptions));
+            this.OnPropertyChanged(nameof(this.SelectedServiceTierLabel));
+            this.OnPropertyChanged(nameof(this.IsFastModeEnabled));
+            this.SaveSettings();
         }
     }
 
-    public string SelectedServiceTierLabel => GetOptionLabel(ServiceTierOptions, SelectedServiceTier, ServiceTierOptions.FirstOrDefault()?.Label ?? string.Empty);
+    public string SelectedServiceTierLabel => GetOptionLabel(this.ServiceTierOptions, this.SelectedServiceTier, this.ServiceTierOptions.FirstOrDefault()?.Label ?? string.Empty);
 
-    public string SelectedApprovalPolicyLabel => GetOptionLabel(ApprovalPolicyOptions, SelectedApprovalPolicy, ApprovalPolicyOptions.FirstOrDefault()?.Label ?? string.Empty);
+    public string SelectedApprovalPolicyLabel => GetOptionLabel(this.ApprovalPolicyOptions, this.SelectedApprovalPolicy, this.ApprovalPolicyOptions.FirstOrDefault()?.Label ?? string.Empty);
 
-    public string SelectedSandboxModeLabel => GetOptionLabel(SandboxModeOptions, SelectedSandboxMode, SandboxModeOptions.FirstOrDefault(option => string.Equals(option.Value, "read-only", StringComparison.Ordinal))?.Label ?? "read-only");
+    public string SelectedSandboxModeLabel => GetOptionLabel(this.SandboxModeOptions, this.SelectedSandboxMode, this.SandboxModeOptions.FirstOrDefault(option => string.Equals(option.Value, "read-only", StringComparison.Ordinal))?.Label ?? "read-only");
 
     public bool PlanModeEnabled
     {
-        get => Settings.PlanModeEnabled;
+        get => this.Settings.PlanModeEnabled;
         set
         {
-            if (Settings.PlanModeEnabled == value)
+            if (this.Settings.PlanModeEnabled == value)
             {
                 return;
             }
 
-            Settings.PlanModeEnabled = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(CollaborationModeLabel));
-            SaveSettings();
+            this.Settings.PlanModeEnabled = value;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.CollaborationModeLabel));
+            this.SaveSettings();
         }
     }
 
     public bool IncludeIdeContextEnabled
     {
-        get => Settings.IncludeIdeContext;
+        get => this.Settings.IncludeIdeContext;
         set
         {
-            if (Settings.IncludeIdeContext == value)
+            if (this.Settings.IncludeIdeContext == value)
             {
                 return;
             }
 
-            Settings.IncludeIdeContext = value;
-            OnPropertyChanged();
-            SaveSettings();
+            this.Settings.IncludeIdeContext = value;
+            this.OnPropertyChanged();
+            this.SaveSettings();
         }
     }
 
     public Geometry ContextRingGeometry
     {
-        get => _contextRingGeometry;
-        private set => RunOnUiThread(() =>
-        {
-            _contextRingGeometry = value;
-            OnPropertyChanged();
-        });
-    }
+        get; private set => RunOnUiThread(() =>
+                                               {
+                                                   field = value;
+                                                   this.OnPropertyChanged();
+                                               });
+    } = Geometry.Parse("M 8,1 A 7,7 0 1 1 7.99,1");
 
-    public string ContextTokensLabel => _lastKnownRemainingTokens > 0
-        ? FormatCompactTokenCount(_lastKnownRemainingTokens)
+    public string ContextTokensLabel => this._lastKnownRemainingTokens > 0
+        ? FormatCompactTokenCount(this._lastKnownRemainingTokens)
         : string.Empty;
 
     public string ContextWindowDetail => string.Format(
         CultureInfo.CurrentUICulture,
-        _localization.ContextWindowDetailFormat,
-        FormatPercent(GetContextUsedRatio(_lastKnownContextTokensInWindow, _contextTokenBudget)),
-        FormatPercent(GetContextRemainingRatio(_lastKnownContextTokensInWindow, _contextTokenBudget)));
+        this.Localization.ContextWindowDetailFormat,
+        FormatPercent(GetContextUsedRatio(this._lastKnownContextTokensInWindow, this._contextTokenBudget)),
+        FormatPercent(GetContextRemainingRatio(this._lastKnownContextTokensInWindow, this._contextTokenBudget)));
 
     public string SkillSearchText
     {
-        get => _skillSearchText;
-        set
+        get; set
         {
-            if (string.Equals(_skillSearchText, value, StringComparison.Ordinal))
+            if (string.Equals(field, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _skillSearchText = value ?? string.Empty;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(VisibleSkills));
-            OnPropertyChanged(nameof(VisibleRemoteSkills));
+            field = value ?? string.Empty;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.VisibleSkills));
+            this.OnPropertyChanged(nameof(this.VisibleRemoteSkills));
         }
-    }
+    } = string.Empty;
 
     public string HistorySearchText
     {
-        get => _historySearchText;
-        set
+        get; set
         {
-            if (string.Equals(_historySearchText, value, StringComparison.Ordinal))
+            if (string.Equals(field, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _historySearchText = value ?? string.Empty;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(VisibleThreads));
-            OnPropertyChanged(nameof(HasVisibleThreads));
+            field = value ?? string.Empty;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.VisibleThreads));
+            this.OnPropertyChanged(nameof(this.HasVisibleThreads));
         }
-    }
+    } = string.Empty;
 
     public string LanguageSearchText
     {
-        get => _languageSearchText;
-        set
+        get; set
         {
-            if (string.Equals(_languageSearchText, value, StringComparison.Ordinal))
+            if (string.Equals(field, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _languageSearchText = value ?? string.Empty;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(VisibleLanguageOptions));
-            OnPropertyChanged(nameof(HasVisibleLanguageOptions));
+            field = value ?? string.Empty;
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.VisibleLanguageOptions));
+            this.OnPropertyChanged(nameof(this.HasVisibleLanguageOptions));
         }
-    }
+    } = string.Empty;
 
-    public IEnumerable<CodexSkillSummary> VisibleSkills => Skills.Where(skill =>
-        string.IsNullOrWhiteSpace(SkillSearchText)
-        || (skill.DisplayTitle ?? string.Empty).IndexOf(SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0
-        || (skill.Name ?? string.Empty).IndexOf(SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0
-        || (skill.Summary ?? string.Empty).IndexOf(SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0);
+    public IEnumerable<CodexSkillSummary> VisibleSkills => this.Skills.Where(skill =>
+        string.IsNullOrWhiteSpace(this.SkillSearchText)
+        || (skill.DisplayTitle ?? string.Empty).IndexOf(this.SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0
+        || (skill.Name ?? string.Empty).IndexOf(this.SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0
+        || (skill.Summary ?? string.Empty).IndexOf(this.SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0);
 
-    public IEnumerable<CodexRemoteSkillSummary> VisibleRemoteSkills => RemoteSkills.Where(skill =>
-        string.IsNullOrWhiteSpace(SkillSearchText)
-        || (skill.Name ?? string.Empty).IndexOf(SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0
-        || (skill.Description ?? string.Empty).IndexOf(SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0);
+    public IEnumerable<CodexRemoteSkillSummary> VisibleRemoteSkills => this.RemoteSkills.Where(skill =>
+        string.IsNullOrWhiteSpace(this.SkillSearchText)
+        || (skill.Name ?? string.Empty).IndexOf(this.SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0
+        || (skill.Description ?? string.Empty).IndexOf(this.SkillSearchText, StringComparison.OrdinalIgnoreCase) >= 0);
 
-    public IEnumerable<CodexThreadSummary> VisibleThreads => Threads.Where(thread =>
-        string.IsNullOrWhiteSpace(HistorySearchText)
-        || (thread.Title ?? string.Empty).IndexOf(HistorySearchText, StringComparison.OrdinalIgnoreCase) >= 0
-        || (thread.Subtitle ?? string.Empty).IndexOf(HistorySearchText, StringComparison.OrdinalIgnoreCase) >= 0
-        || (thread.Preview ?? string.Empty).IndexOf(HistorySearchText, StringComparison.OrdinalIgnoreCase) >= 0);
+    public IEnumerable<CodexThreadSummary> VisibleThreads => this.Threads.Where(thread =>
+        string.IsNullOrWhiteSpace(this.HistorySearchText)
+        || (thread.Title ?? string.Empty).IndexOf(this.HistorySearchText, StringComparison.OrdinalIgnoreCase) >= 0
+        || (thread.Subtitle ?? string.Empty).IndexOf(this.HistorySearchText, StringComparison.OrdinalIgnoreCase) >= 0
+        || (thread.Preview ?? string.Empty).IndexOf(this.HistorySearchText, StringComparison.OrdinalIgnoreCase) >= 0);
 
-    public IEnumerable<CodexThreadSummary> RecentThreadsPreview => _showExpandedRecentTasksPreview ? Threads : Threads.Take(3);
+    public IEnumerable<CodexThreadSummary> RecentThreadsPreview => this.IsRecentTasksPreviewExpanded ? this.Threads : this.Threads.Take(3);
 
-    public bool IsRecentTasksPreviewExpanded => _showExpandedRecentTasksPreview;
+    public bool IsRecentTasksPreviewExpanded { get; private set; }
 
-    public IEnumerable<SelectionOption> VisibleLanguageOptions => LanguageOptions.Where(option =>
-        string.IsNullOrWhiteSpace(LanguageSearchText)
-        || option.Label.IndexOf(LanguageSearchText, StringComparison.OrdinalIgnoreCase) >= 0);
+    public IEnumerable<SelectionOption> VisibleLanguageOptions => this.LanguageOptions.Where(option =>
+        string.IsNullOrWhiteSpace(this.LanguageSearchText)
+        || option.Label.IndexOf(this.LanguageSearchText, StringComparison.OrdinalIgnoreCase) >= 0);
 
-    public string LanguageSearchPlaceholder => Localization.SearchLanguagesPlaceholder;
+    public string LanguageSearchPlaceholder => this.Localization.SearchLanguagesPlaceholder;
 
     public CodexRateLimitSummary RateLimitSummary
     {
-        get => _rateLimitSummary;
-        private set
+        get; private set
         {
-            _rateLimitSummary = value ?? new CodexRateLimitSummary();
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(HasRateLimitData));
-            OnPropertyChanged(nameof(RateLimitEntries));
-            OnPropertyChanged(nameof(ShowRateLimitUnavailableEntry));
+            field = value ?? new CodexRateLimitSummary();
+            this.OnPropertyChanged();
+            this.OnPropertyChanged(nameof(this.HasRateLimitData));
+            this.OnPropertyChanged(nameof(this.RateLimitEntries));
+            this.OnPropertyChanged(nameof(this.ShowRateLimitUnavailableEntry));
         }
-    }
+    } = new();
 
-    public bool HasRateLimitData => RateLimitSummary.HasAnyData;
+    public bool HasRateLimitData => this.RateLimitSummary.HasAnyData;
 
-    public IEnumerable<CodexRateLimitWindowSummary> RateLimitEntries => RateLimitSummary.Entries;
+    public IEnumerable<CodexRateLimitWindowSummary> RateLimitEntries => this.RateLimitSummary.Entries;
 
-    public bool ShowRateLimitUnavailableEntry => !HasRateLimitData;
+    public bool ShowRateLimitUnavailableEntry => !this.HasRateLimitData;
 
-    public bool HasPreferredMcpServers => (Settings.PreferredMcpServers?.Count ?? 0) > 0;
+    public bool HasPreferredMcpServers => (this.Settings.PreferredMcpServers?.Count ?? 0) > 0;
 
-    public IEnumerable<string> PreferredMcpServers => Settings.PreferredMcpServers ?? Enumerable.Empty<string>();
+    public IEnumerable<string> PreferredMcpServers => this.Settings.PreferredMcpServers ?? Enumerable.Empty<string>();
 
-    public bool HasThreads => Threads.Count > 0;
+    public bool HasThreads => this.Threads.Count > 0;
 
-    public bool HasVisibleThreads => VisibleThreads.Any();
+    public bool HasVisibleThreads => this.VisibleThreads.Any();
 
-    public bool HasVisibleLanguageOptions => VisibleLanguageOptions.Any();
+    public bool HasVisibleLanguageOptions => this.VisibleLanguageOptions.Any();
 
-    public bool HasMoreThreadsThanPreview => !_showExpandedRecentTasksPreview && Threads.Count > 3;
+    public bool HasMoreThreadsThanPreview => !this.IsRecentTasksPreviewExpanded && this.Threads.Count > 3;
 
-    public bool ShowRecentTasksPreview => HasThreads
-        && !ShowHistoryPanel
-        && !ShowSettingsPanel
-        && !_hideRecentTasksPreview
-        && (Messages.Count == 0 || _pinRecentTasksPreview);
+    public bool ShowRecentTasksPreview => this.HasThreads
+        && !this.ShowHistoryPanel
+        && !this.ShowSettingsPanel
+        && !this._hideRecentTasksPreview
+        && (this.Messages.Count == 0 || this._pinRecentTasksPreview);
 
-    public DelegateCommand PrimaryActionCommand => IsBusy ? CancelCommand : SendCommand;
+    public DelegateCommand PrimaryActionCommand => this.IsBusy ? this.CancelCommand : this.SendCommand;
 
-    public string PrimaryActionTooltip => IsStopping
-        ? Localization.StoppingTooltip
-        : (IsBusy ? Localization.StopTooltip : Localization.SendTooltip);
+    public string PrimaryActionTooltip => this.IsStopping
+        ? this.Localization.StoppingTooltip
+        : (this.IsBusy ? this.Localization.StopTooltip : this.Localization.SendTooltip);
 
-    public bool ShowSendActionIcon => !IsBusy;
+    public bool ShowSendActionIcon => !this.IsBusy;
 
-    public bool ShowStopActionIcon => IsBusy && !IsStopping;
+    public bool ShowStopActionIcon => this.IsBusy && !this.IsStopping;
 
-    public bool ShowStoppingIndicator => IsBusy && IsStopping;
+    public bool ShowStoppingIndicator => this.IsBusy && this.IsStopping;
 
     public string SelectedLanguageTag
     {
-        get => NormalizeLanguageTag(Settings.LanguageOverride);
+        get => NormalizeLanguageTag(this.Settings.LanguageOverride);
         set
         {
-            var normalized = NormalizeLanguageTag(value);
-            if (string.Equals(NormalizeLanguageTag(Settings.LanguageOverride), normalized, StringComparison.OrdinalIgnoreCase))
+            ThreadHelper.ThrowIfNotOnUIThread();
+            string normalized = NormalizeLanguageTag(value);
+            if (string.Equals(NormalizeLanguageTag(this.Settings.LanguageOverride), normalized, StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
 
-            Settings.LanguageOverride = normalized;
-            ApplyLocalization(normalized);
-            OnPropertyChanged();
-            SaveSettings();
+            this.Settings.LanguageOverride = normalized;
+            this.ApplyLocalization(normalized);
+            this.OnPropertyChanged();
+            this.SaveSettings();
         }
     }
 
     public CodexThreadSummary? SelectedThread
     {
-        get => _selectedThread;
-        set
+        get; set
         {
-            if (ReferenceEquals(_selectedThread, value))
+            if (ReferenceEquals(field, value))
             {
                 return;
             }
 
-            _selectedThread = value;
-            if (string.IsNullOrWhiteSpace(EditingThreadId))
+            field = value;
+            if (string.IsNullOrWhiteSpace(this.EditingThreadId))
             {
-                RenameThreadName = value?.Title ?? string.Empty;
+                this.RenameThreadName = value?.Title ?? string.Empty;
             }
 
-            OnPropertyChanged();
-            BeginRenameThreadCommand?.RaiseCanExecuteChanged();
-            RenameThreadCommand?.RaiseCanExecuteChanged();
-            CancelRenameThreadCommand?.RaiseCanExecuteChanged();
-            DeleteThreadCommand?.RaiseCanExecuteChanged();
+            this.OnPropertyChanged();
+            this.BeginRenameThreadCommand?.RaiseCanExecuteChanged();
+            this.RenameThreadCommand?.RaiseCanExecuteChanged();
+            this.CancelRenameThreadCommand?.RaiseCanExecuteChanged();
+            this.DeleteThreadCommand?.RaiseCanExecuteChanged();
 
-            if (!_suppressThreadSelection && value is not null)
+            if (!this._suppressThreadSelection && value is not null)
             {
-                ThreadHelper.JoinableTaskFactory.RunAsync(() => OpenThreadAsync(value.ThreadId));
+                _ = ThreadHelper.JoinableTaskFactory.RunAsync(() => this.OpenThreadAsync(value.ThreadId));
             }
         }
     }
 
     public string RenameThreadName
     {
-        get => _renameThreadName;
-        set
+        get; set
         {
-            _renameThreadName = value;
-            OnPropertyChanged();
-            RenameThreadCommand?.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.RenameThreadCommand?.RaiseCanExecuteChanged();
         }
-    }
+    } = string.Empty;
 
     public string EditingThreadId
     {
-        get => _editingThreadId;
-        private set
+        get; private set
         {
             value ??= string.Empty;
-            if (string.Equals(_editingThreadId, value, StringComparison.Ordinal))
+            if (string.Equals(field, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _editingThreadId = value;
-            OnPropertyChanged();
-            BeginRenameThreadCommand?.RaiseCanExecuteChanged();
-            RenameThreadCommand?.RaiseCanExecuteChanged();
-            CancelRenameThreadCommand?.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.BeginRenameThreadCommand?.RaiseCanExecuteChanged();
+            this.RenameThreadCommand?.RaiseCanExecuteChanged();
+            this.CancelRenameThreadCommand?.RaiseCanExecuteChanged();
         }
-    }
+    } = string.Empty;
 
     public string NewSkillName
     {
-        get => _newSkillName;
-        set
+        get; set
         {
-            _newSkillName = value;
-            OnPropertyChanged();
-            CreateSkillCommand.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.CreateSkillCommand.RaiseCanExecuteChanged();
         }
-    }
+    } = string.Empty;
 
     public string NewSkillDescription
     {
-        get => _newSkillDescription;
-        set
+        get; set
         {
-            _newSkillDescription = value;
-            OnPropertyChanged();
+            field = value;
+            this.OnPropertyChanged();
         }
-    }
+    } = string.Empty;
 
-    private string? _selectedMention;
     public string? SelectedMention
     {
-        get => _selectedMention;
-        set
+        get; set
         {
-            _selectedMention = value;
-            OnPropertyChanged();
-            InsertSelectedMentionCommand.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.InsertSelectedMentionCommand.RaiseCanExecuteChanged();
         }
     }
 
-    private string? _selectedImagePath;
     public string? SelectedImagePath
     {
-        get => _selectedImagePath;
-        set
+        get; set
         {
-            _selectedImagePath = value;
-            OnPropertyChanged();
-            RemoveSelectedImageCommand.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.RemoveSelectedImageCommand.RaiseCanExecuteChanged();
         }
     }
 
-    private string? _selectedHistoryPrompt;
     public string? SelectedHistoryPrompt
     {
-        get => _selectedHistoryPrompt;
-        set
+        get; set
         {
-            _selectedHistoryPrompt = value;
-            OnPropertyChanged();
-            ReuseHistoryPromptCommand.RaiseCanExecuteChanged();
+            field = value;
+            this.OnPropertyChanged();
+            this.ReuseHistoryPromptCommand.RaiseCanExecuteChanged();
         }
     }
 
     private async Task SendAsync()
     {
-        var promptToSend = BuildEffectivePrompt();
-        if (IsBusy || string.IsNullOrWhiteSpace(promptToSend))
+        string promptToSend = this.BuildEffectivePrompt();
+        if (this.IsBusy || string.IsNullOrWhiteSpace(promptToSend))
         {
             return;
         }
 
-        if (!IsCodexReady)
+        if (!this.IsCodexReady)
         {
-            AppendOutput("[" + _localization.OutputTagSetup + "] " + CodexSetupSummary + Environment.NewLine);
+            this.AppendOutput("[" + this.Localization.OutputTagSetup + "] " + this.CodexSetupSummary + Environment.NewLine);
             return;
         }
 
-        EnsureThreadMatchesWorkingDirectory();
-        var shouldAutoNameThread = Messages.Count == 0 && SelectedThread is null;
+        this.EnsureThreadMatchesWorkingDirectory();
+        bool shouldAutoNameThread = this.Messages.Count == 0 && this.SelectedThread is null;
 
         if (shouldAutoNameThread)
         {
-            BeginConversationStateChange();
-            Settings.CurrentThreadId = string.Empty;
-            Settings.LastThreadWorkingDirectory = Settings.WorkingDirectory;
-            _codexProcessService.ResetThread();
+            _ = this.BeginConversationStateChange();
+            this.Settings.CurrentThreadId = string.Empty;
+            this.Settings.LastThreadWorkingDirectory = this.Settings.WorkingDirectory;
+            this._codexProcessService.ResetThread();
         }
 
-        if (string.IsNullOrWhiteSpace(Settings.CurrentThreadId))
+        if (string.IsNullOrWhiteSpace(this.Settings.CurrentThreadId))
         {
-            _codexProcessService.ResetThread();
+            this._codexProcessService.ResetThread();
         }
 
-        var conversationStateVersion = CaptureConversationStateVersion();
+        long conversationStateVersion = this.CaptureConversationStateVersion();
 
-        var ideContextSummary = await CaptureIdeContextSummaryAsync().ConfigureAwait(false);
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        string ideContextSummary = await this.CaptureIdeContextSummaryAsync();
 
-        SaveSettings();
-        AddPromptToHistory(promptToSend);
-        ClearPersistedEventMessages();
-        AddUserMessage(promptToSend.Trim());
+        this.SaveSettings();
+        this.AddPromptToHistory(promptToSend);
+        this.ClearPersistedEventMessages();
+        this.AddUserMessage(promptToSend.Trim());
 
-        IsBusy = true;
-        IsStopping = false;
-        _cts = new CancellationTokenSource();
-        _currentAssistantMessage = null;
-        _currentPlanMessage = null;
-        ClearTransientStatusMessage();
-        Prompt = string.Empty;
+        this.IsBusy = true;
+        this.IsStopping = false;
+        this._cts = new CancellationTokenSource();
+        this._currentAssistantMessage = null;
+        this._currentPlanMessage = null;
+        this.ClearTransientStatusMessage();
+        this.Prompt = string.Empty;
 
         try
         {
-            var exitCode = await _codexProcessService.ExecuteAsync(
+            int exitCode = await this._codexProcessService.ExecuteAsync(
                 promptToSend,
-                Settings,
-                AttachedImages.ToList(),
+                this.Settings,
+                this.AttachedImages.ToList(),
                 ideContextSummary,
                 onOutput: text =>
                 {
-                    if (IsConversationStateCurrent(conversationStateVersion))
+                    if (this.IsConversationStateCurrent(conversationStateVersion))
                     {
-                        AppendAssistantOutput(text, conversationStateVersion);
+                        this.AppendAssistantOutput(text, conversationStateVersion);
                     }
                 },
                 onError: text =>
                 {
-                    if (IsConversationStateCurrent(conversationStateVersion))
+                    if (this.IsConversationStateCurrent(conversationStateVersion))
                     {
-                        AppendStderr(text);
+                        this.AppendStderr(text);
                     }
                 },
                 onEventMessage: message =>
                 {
-                    if (IsConversationStateCurrent(conversationStateVersion))
+                    if (this.IsConversationStateCurrent(conversationStateVersion))
                     {
-                        AddRuntimeEventMessage(message);
+                        this.AddRuntimeEventMessage(message);
                     }
                 },
                 onTokenUsage: (tokensInContextWindow, contextWindow) =>
                 {
-                    if (IsConversationStateCurrent(conversationStateVersion))
+                    if (this.IsConversationStateCurrent(conversationStateVersion))
                     {
-                        UpdateTokenUsage(tokensInContextWindow, contextWindow);
+                        this.UpdateTokenUsage(tokensInContextWindow, contextWindow);
                     }
                 },
-                cancellationToken: _cts.Token);
+                cancellationToken: this._cts.Token);
 
-            await FlushPendingAssistantOutputAsync().ConfigureAwait(false);
+            await this.FlushPendingAssistantOutputAsync().ConfigureAwait(false);
 
-            if (!IsConversationStateCurrent(conversationStateVersion))
+            if (!this.IsConversationStateCurrent(conversationStateVersion))
             {
                 return;
             }
 
-            if (exitCode != 0 && _currentAssistantMessage is null)
+            if (exitCode != 0 && this._currentAssistantMessage is null)
             {
-                AddAssistantMessage(_localization.CodexNoResponse);
+                this.AddAssistantMessage(this.Localization.CodexNoResponse);
             }
 
-            Settings.CurrentThreadId = _codexProcessService.CurrentThreadId ?? Settings.CurrentThreadId;
-            Settings.LastThreadWorkingDirectory = Settings.WorkingDirectory;
-            SaveSettings();
-            await RefreshThreadsAsync(Settings.CurrentThreadId).ConfigureAwait(false);
-            await EnsureCurrentThreadHasFriendlyNameAsync(shouldAutoNameThread ? promptToSend : null).ConfigureAwait(false);
-            await RefreshServerSurfacesAsync().ConfigureAwait(false);
-            AppendOutput($"{Environment.NewLine}[{_localization.ExitCodeLabel}: {exitCode}]{Environment.NewLine}");
+            this.Settings.CurrentThreadId = this._codexProcessService.CurrentThreadId ?? this.Settings.CurrentThreadId;
+            this.Settings.LastThreadWorkingDirectory = this.Settings.WorkingDirectory;
+            this.SaveSettings();
+            await this.RefreshThreadsAsync(this.Settings.CurrentThreadId).ConfigureAwait(false);
+            await this.EnsureCurrentThreadHasFriendlyNameAsync(shouldAutoNameThread ? promptToSend : null).ConfigureAwait(false);
+            await this.RefreshServerSurfacesAsync().ConfigureAwait(false);
+            this.AppendOutput($"{Environment.NewLine}[{this.Localization.ExitCodeLabel}: {exitCode}]{Environment.NewLine}");
         }
         catch (OperationCanceledException)
         {
-            if (IsConversationStateCurrent(conversationStateVersion))
+            if (this.IsConversationStateCurrent(conversationStateVersion))
             {
-                AddAssistantMessage(_localization.ExecutionCanceled);
-                AppendOutput($"{Environment.NewLine}[{_localization.ExecutionCanceledTag}]{Environment.NewLine}");
+                this.AddAssistantMessage(this.Localization.ExecutionCanceled);
+                this.AppendOutput($"{Environment.NewLine}[{this.Localization.ExecutionCanceledTag}]{Environment.NewLine}");
             }
         }
         catch (Exception ex)
         {
-            if (IsConversationStateCurrent(conversationStateVersion))
+            if (this.IsConversationStateCurrent(conversationStateVersion))
             {
-                AddAssistantMessage(_localization.ExecutionError + " " + ex.Message);
-                AppendOutput($"{Environment.NewLine}[{_localization.ExecutionErrorTag}] {ex.Message}{Environment.NewLine}");
+                this.AddAssistantMessage(this.Localization.ExecutionError + " " + ex.Message);
+                this.AppendOutput($"{Environment.NewLine}[{this.Localization.ExecutionErrorTag}] {ex.Message}{Environment.NewLine}");
             }
         }
         finally
         {
-            await FlushPendingAssistantOutputAsync().ConfigureAwait(false);
+            await this.FlushPendingAssistantOutputAsync().ConfigureAwait(false);
 
-            if (IsConversationStateCurrent(conversationStateVersion))
+            if (this.IsConversationStateCurrent(conversationStateVersion))
             {
-                ClearTransientStatusMessage();
+                this.ClearTransientStatusMessage();
             }
 
-            IsStopping = false;
-            IsBusy = false;
-            _cts?.Dispose();
-            _cts = null;
+            this.IsStopping = false;
+            this.IsBusy = false;
+            this._cts?.Dispose();
+            this._cts = null;
         }
     }
 
     private async Task EnsureCurrentThreadHasFriendlyNameAsync(string? prompt)
     {
-        if (string.IsNullOrWhiteSpace(Settings.CurrentThreadId) || string.IsNullOrWhiteSpace(prompt))
+        if (string.IsNullOrWhiteSpace(this.Settings.CurrentThreadId) || string.IsNullOrWhiteSpace(prompt))
         {
             return;
         }
@@ -1360,7 +1325,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         CodexThreadSummary? currentThread = null;
         RunOnUiThread(() =>
         {
-            currentThread = Threads.FirstOrDefault(thread => string.Equals(thread.ThreadId, Settings.CurrentThreadId, StringComparison.Ordinal));
+            currentThread = this.Threads.FirstOrDefault(thread => string.Equals(thread.ThreadId, this.Settings.CurrentThreadId, StringComparison.Ordinal));
         });
 
         if (currentThread is null || !string.IsNullOrWhiteSpace(currentThread.Name))
@@ -1368,14 +1333,14 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        var friendlyName = BuildFriendlyThreadName(prompt);
+        string friendlyName = BuildFriendlyThreadName(prompt);
         if (string.IsNullOrWhiteSpace(friendlyName))
         {
             return;
         }
 
-        await _codexProcessService.RenameThreadAsync(Settings, currentThread.ThreadId, friendlyName, CancellationToken.None).ConfigureAwait(false);
-        await RefreshThreadsAsync(currentThread.ThreadId).ConfigureAwait(false);
+        await this._codexProcessService.RenameThreadAsync(this.Settings, currentThread.ThreadId, friendlyName, CancellationToken.None).ConfigureAwait(false);
+        await this.RefreshThreadsAsync(currentThread.ThreadId).ConfigureAwait(false);
     }
 
     private static string BuildFriendlyThreadName(string prompt)
@@ -1385,106 +1350,106 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return string.Empty;
         }
 
-        var compact = Regex.Replace(prompt.Replace("\r", " ").Replace("\n", " "), @"\s+", " ").Trim();
+        string compact = Regex.Replace(prompt.Replace("\r", " ").Replace("\n", " "), @"\s+", " ").Trim();
         if (compact.Length <= 96)
         {
             return compact;
         }
 
-        var shortened = compact.Substring(0, 96).TrimEnd();
+        string shortened = compact.Substring(0, 96).TrimEnd();
         return shortened + "...";
     }
 
     private void Send()
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(SendAsync);
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(this.SendAsync);
     }
 
     private async Task<string> CaptureIdeContextSummaryAsync()
     {
-        if (!IncludeIdeContextEnabled)
+        if (!this.IncludeIdeContextEnabled)
         {
             return string.Empty;
         }
 
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-        var summary = _solutionContextService.BuildIdeContextSummary(Settings.WorkingDirectory);
+        string summary = this._solutionContextService.BuildIdeContextSummary(this.Settings.WorkingDirectory);
         return string.IsNullOrWhiteSpace(summary)
             ? string.Empty
-            : _localization.IdeContextPrefix + Environment.NewLine + summary;
+            : this.Localization.IdeContextPrefix + Environment.NewLine + summary;
     }
 
     private void SaveSettings()
     {
-        Settings.ManagedMcpServers = ManagedMcpServers
+        this.Settings.ManagedMcpServers = this.ManagedMcpServers
             .Select(CloneManagedMcpServer)
             .ToList();
-        Settings.PreferredMcpServers = Settings.PreferredMcpServers
+        this.Settings.PreferredMcpServers = this.Settings.PreferredMcpServers
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        Settings.CustomModels = Settings.CustomModels
+        this.Settings.CustomModels = this.Settings.CustomModels
             .Where(model => !string.IsNullOrWhiteSpace(model))
             .Select(model => NormalizeModelValue(model))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        Settings.CustomReasoningEfforts = NormalizeManualOptionEntries(Settings.CustomReasoningEfforts)
+        this.Settings.CustomReasoningEfforts = NormalizeManualOptionEntries(this.Settings.CustomReasoningEfforts)
             .Select(NormalizeManualReasoningOptionEntry)
             .Where(entry => !string.IsNullOrWhiteSpace(ParseManualSelectionOption(entry)?.Value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        Settings.CustomVerbosityOptions = NormalizeManualOptionEntries(Settings.CustomVerbosityOptions);
-        Settings.CustomServiceTiers = NormalizeManualOptionEntries(Settings.CustomServiceTiers);
-        PersistSelectedModelIfCustom();
-        Settings.DefaultModel = SelectedModel;
-        Settings.ReasoningEffort = SelectedReasoningEffort;
-        Settings.ModelVerbosity = SelectedVerbosity;
-        Settings.ServiceTier = SelectedServiceTier;
-        Settings.ApprovalPolicy = SelectedApprovalPolicy;
-        Settings.SandboxMode = SelectedSandboxMode;
-        _settingsStore.Save(Settings);
+        this.Settings.CustomVerbosityOptions = NormalizeManualOptionEntries(this.Settings.CustomVerbosityOptions);
+        this.Settings.CustomServiceTiers = NormalizeManualOptionEntries(this.Settings.CustomServiceTiers);
+        this.PersistSelectedModelIfCustom();
+        this.Settings.DefaultModel = this.SelectedModel;
+        this.Settings.ReasoningEffort = this.SelectedReasoningEffort;
+        this.Settings.ModelVerbosity = this.SelectedVerbosity;
+        this.Settings.ServiceTier = this.SelectedServiceTier;
+        this.Settings.ApprovalPolicy = this.SelectedApprovalPolicy;
+        this.Settings.SandboxMode = this.SelectedSandboxMode;
+        this._settingsStore.Save(this.Settings);
     }
 
     private void ApplySettings()
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
         {
-            SaveSettings();
-            await RefreshCodexStatusAsync().ConfigureAwait(false);
-            if (!IsCodexReady)
+            this.SaveSettings();
+            await this.RefreshCodexStatusAsync().ConfigureAwait(false);
+            if (!this.IsCodexReady)
             {
-                ClearServerSurfaces();
+                this.ClearServerSurfaces();
                 return;
             }
 
-            await RefreshModelOptionsAsync().ConfigureAwait(false);
-            await RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
+            await this.RefreshModelOptionsAsync().ConfigureAwait(false);
+            await this.RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
         });
     }
 
     private void Cancel()
     {
-        if (!IsBusy || IsStopping)
+        if (!this.IsBusy || this.IsStopping)
         {
             return;
         }
 
-        BeginConversationStateChange();
-        IsStopping = true;
-        _approvalDecisionTcs?.TrySetResult(JValue.CreateString("cancel"));
-        CurrentApprovalPrompt = null;
-        _approvalDecisionTcs = null;
-        DismissUserInputPrompt();
-        var cts = _cts;
-        _cts = null;
-        _codexProcessService.CancelActiveTurn();
+        _ = this.BeginConversationStateChange();
+        this.IsStopping = true;
+        _ = (this._approvalDecisionTcs?.TrySetResult(JValue.CreateString("cancel")));
+        this.CurrentApprovalPrompt = null;
+        this._approvalDecisionTcs = null;
+        this.DismissUserInputPrompt();
+        CancellationTokenSource? cts = this._cts;
+        this._cts = null;
+        this._codexProcessService.CancelActiveTurn();
         cts?.Cancel();
         cts?.Dispose();
-        ClearTransientStatusMessage();
-        _currentAssistantMessage = null;
-        _currentPlanMessage = null;
-        IsStopping = false;
-        IsBusy = false;
+        this.ClearTransientStatusMessage();
+        this._currentAssistantMessage = null;
+        this._currentPlanMessage = null;
+        this.IsStopping = false;
+        this.IsBusy = false;
     }
 
     public void PasteImageFromClipboard()
@@ -1496,28 +1461,29 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
                 return;
             }
 
-            var image = Clipboard.GetImage();
+            BitmapSource? image = Clipboard.GetImage();
             if (image is null)
             {
                 return;
             }
 
-            var filePath = SaveBitmapToTempPng(image);
-            AttachedImages.Add(filePath);
-            SelectedImagePath = filePath;
-            UpdateContextEstimate();
+            string filePath = SaveBitmapToTempPng(image);
+            this.AttachedImages.Add(filePath);
+            this.SelectedImagePath = filePath;
+            this.UpdateContextEstimate();
         }
         catch (Exception ex)
         {
-            AppendOutput(_localization.ImagePasteErrorPrefix + ex.Message + Environment.NewLine);
+            this.AppendOutput(this.Localization.ImagePasteErrorPrefix + ex.Message + Environment.NewLine);
         }
     }
 
     private void AddAttachment()
     {
-        var dialog = new OpenFileDialog
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        OpenFileDialog dialog = new()
         {
-            Filter = _localization.AllFilesFilter,
+            Filter = this.Localization.AllFilesFilter,
             Multiselect = true
         };
 
@@ -1526,32 +1492,32 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        foreach (var fileName in dialog.FileNames)
+        foreach (string? fileName in dialog.FileNames)
         {
             if (IsImageFile(fileName))
             {
-                AttachedImages.Add(fileName);
-                SelectedImagePath = fileName;
+                this.AttachedImages.Add(fileName);
+                this.SelectedImagePath = fileName;
             }
             else
             {
-                AppendFileReferenceToPrompt(fileName);
+                this.AppendFileReferenceToPrompt(fileName);
             }
         }
 
-        UpdateContextEstimate();
+        this.UpdateContextEstimate();
     }
 
     private void RemoveSelectedImage()
     {
-        if (SelectedImagePath is null)
+        if (this.SelectedImagePath is null)
         {
             return;
         }
 
-        AttachedImages.Remove(SelectedImagePath);
-        SelectedImagePath = null;
-        UpdateContextEstimate();
+        _ = this.AttachedImages.Remove(this.SelectedImagePath);
+        this.SelectedImagePath = null;
+        this.UpdateContextEstimate();
     }
 
     private void RemoveAttachment(object? parameter)
@@ -1561,13 +1527,13 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        AttachedImages.Remove(filePath);
-        if (string.Equals(SelectedImagePath, filePath, StringComparison.Ordinal))
+        _ = this.AttachedImages.Remove(filePath);
+        if (string.Equals(this.SelectedImagePath, filePath, StringComparison.Ordinal))
         {
-            SelectedImagePath = null;
+            this.SelectedImagePath = null;
         }
 
-        UpdateContextEstimate();
+        this.UpdateContextEstimate();
     }
 
     private void UseSolutionDirectory()
@@ -1575,32 +1541,32 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            ApplyWorkingDirectory(_solutionContextService.GetBestWorkingDirectory(), resetConversation: true);
-            OnPropertyChanged(nameof(Settings));
-            SaveSettings();
-            await RefreshThreadsAsync(Settings.CurrentThreadId).ConfigureAwait(false);
-            await RefreshModelOptionsAsync().ConfigureAwait(false);
-            await RefreshServerSurfacesAsync().ConfigureAwait(false);
+            this.ApplyWorkingDirectory(this._solutionContextService.GetBestWorkingDirectory(), resetConversation: true);
+            this.OnPropertyChanged(nameof(this.Settings));
+            this.SaveSettings();
+            await this.RefreshThreadsAsync(this.Settings.CurrentThreadId).ConfigureAwait(false);
+            await this.RefreshModelOptionsAsync().ConfigureAwait(false);
+            await this.RefreshServerSurfacesAsync().ConfigureAwait(false);
         });
     }
 
     private void ApplyStartupWorkingDirectory()
     {
         ThreadHelper.ThrowIfNotOnUIThread();
-        var solutionDirectory = _solutionContextService.TryGetBestWorkspaceDirectory();
+        string? solutionDirectory = this._solutionContextService.TryGetBestWorkspaceDirectory();
         if (string.IsNullOrWhiteSpace(solutionDirectory) || !Directory.Exists(solutionDirectory))
         {
             return;
         }
 
-        if (string.Equals(Settings.WorkingDirectory, solutionDirectory, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(this.Settings.WorkingDirectory, solutionDirectory, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
-        ApplyWorkingDirectory(solutionDirectory, resetConversation: true);
-        OnPropertyChanged(nameof(Settings));
-        _settingsStore.Save(Settings);
+        this.ApplyWorkingDirectory(solutionDirectory, resetConversation: true);
+        this.OnPropertyChanged(nameof(this.Settings));
+        this._settingsStore.Save(this.Settings);
     }
 
     private void ApplyWorkingDirectory(string workingDirectory, bool resetConversation)
@@ -1610,40 +1576,40 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        Settings.WorkingDirectory = workingDirectory;
+        this.Settings.WorkingDirectory = workingDirectory;
         if (!resetConversation)
         {
             return;
         }
 
-        BeginConversationStateChange();
-        Settings.CurrentThreadId = string.Empty;
-        Settings.LastThreadWorkingDirectory = workingDirectory;
-        _codexProcessService.ResetThread();
+        _ = this.BeginConversationStateChange();
+        this.Settings.CurrentThreadId = string.Empty;
+        this.Settings.LastThreadWorkingDirectory = workingDirectory;
+        this._codexProcessService.ResetThread();
         RunOnUiThread(() =>
         {
-            _suppressThreadSelection = true;
-            SelectedThread = null;
-            _suppressThreadSelection = false;
-            EditingThreadId = string.Empty;
-            RenameThreadName = string.Empty;
-            Messages.Clear();
-            Output = string.Empty;
+            this._suppressThreadSelection = true;
+            this.SelectedThread = null;
+            this._suppressThreadSelection = false;
+            this.EditingThreadId = string.Empty;
+            this.RenameThreadName = string.Empty;
+            this.Messages.Clear();
+            this.Output = string.Empty;
         });
     }
 
     private void EnsureThreadMatchesWorkingDirectory()
     {
-        var currentWorkingDirectory = (Settings.WorkingDirectory ?? string.Empty).Trim();
-        var lastThreadWorkingDirectory = (Settings.LastThreadWorkingDirectory ?? string.Empty).Trim();
+        string currentWorkingDirectory = (this.Settings.WorkingDirectory ?? string.Empty).Trim();
+        string lastThreadWorkingDirectory = (this.Settings.LastThreadWorkingDirectory ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(currentWorkingDirectory))
         {
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(Settings.CurrentThreadId))
+        if (string.IsNullOrWhiteSpace(this.Settings.CurrentThreadId))
         {
-            Settings.LastThreadWorkingDirectory = currentWorkingDirectory;
+            this.Settings.LastThreadWorkingDirectory = currentWorkingDirectory;
             return;
         }
 
@@ -1652,61 +1618,61 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        Settings.CurrentThreadId = string.Empty;
-        Settings.LastThreadWorkingDirectory = currentWorkingDirectory;
-        _codexProcessService.ResetThread();
+        this.Settings.CurrentThreadId = string.Empty;
+        this.Settings.LastThreadWorkingDirectory = currentWorkingDirectory;
+        this._codexProcessService.ResetThread();
     }
 
     private void NormalizeSelectionSettings()
     {
-        Settings.DefaultModel = NormalizeModelValue(Settings.DefaultModel);
-        if (string.IsNullOrWhiteSpace(Settings.DefaultModel))
+        this.Settings.DefaultModel = NormalizeModelValue(this.Settings.DefaultModel);
+        if (string.IsNullOrWhiteSpace(this.Settings.DefaultModel))
         {
-            Settings.DefaultModel = "gpt-5.4";
+            this.Settings.DefaultModel = "gpt-5.4";
         }
 
-        Settings.ReasoningEffort = EnsureKnownOrCustomOptionValue(NormalizeReasoningEffortValue(Settings.ReasoningEffort), ReasoningOptions, "high");
-        Settings.ModelVerbosity = EnsureKnownOrCustomOptionValue(Settings.ModelVerbosity, VerbosityOptions, "medium");
-        Settings.ServiceTier = EnsureKnownOrCustomOptionValue(Settings.ServiceTier, ServiceTierOptions, string.Empty);
-        Settings.SandboxMode = EnsureOptionValue(Settings.SandboxMode, SandboxModeOptions, "read-only");
-        Settings.ApprovalPolicy = EnsureOptionValue(Settings.ApprovalPolicy, ApprovalPolicyOptions, string.Empty);
+        this.Settings.ReasoningEffort = EnsureKnownOrCustomOptionValue(NormalizeReasoningEffortValue(this.Settings.ReasoningEffort), this.ReasoningOptions, "high");
+        this.Settings.ModelVerbosity = EnsureKnownOrCustomOptionValue(this.Settings.ModelVerbosity, this.VerbosityOptions, "medium");
+        this.Settings.ServiceTier = EnsureKnownOrCustomOptionValue(this.Settings.ServiceTier, this.ServiceTierOptions, string.Empty);
+        this.Settings.SandboxMode = EnsureOptionValue(this.Settings.SandboxMode, this.SandboxModeOptions, "read-only");
+        this.Settings.ApprovalPolicy = EnsureOptionValue(this.Settings.ApprovalPolicy, this.ApprovalPolicyOptions, string.Empty);
     }
 
     private void EnsureSettingsCollectionsInitialized()
     {
-        Settings.PromptHistory ??= new List<string>();
-        Settings.CustomModels ??= new List<string>();
-        Settings.CustomReasoningEfforts ??= new List<string>();
-        Settings.CustomVerbosityOptions ??= new List<string>();
-        Settings.CustomServiceTiers ??= new List<string>();
-        Settings.ManagedMcpServers ??= new List<CodexManagedMcpServer>();
-        Settings.PreferredMcpServers ??= new List<string>();
+        this.Settings.PromptHistory ??= [];
+        this.Settings.CustomModels ??= [];
+        this.Settings.CustomReasoningEfforts ??= [];
+        this.Settings.CustomVerbosityOptions ??= [];
+        this.Settings.CustomServiceTiers ??= [];
+        this.Settings.ManagedMcpServers ??= [];
+        this.Settings.PreferredMcpServers ??= [];
 
-        Settings.PromptHistory = Settings.PromptHistory
+        this.Settings.PromptHistory = this.Settings.PromptHistory
             .Where(item => !string.IsNullOrWhiteSpace(item))
             .Select(item => item.Trim())
             .ToList();
 
-        Settings.CustomModels = Settings.CustomModels
+        this.Settings.CustomModels = this.Settings.CustomModels
             .Where(model => !string.IsNullOrWhiteSpace(model))
             .Select(model => NormalizeModelValue(model))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        Settings.CustomReasoningEfforts = NormalizeManualOptionEntries(Settings.CustomReasoningEfforts)
+        this.Settings.CustomReasoningEfforts = NormalizeManualOptionEntries(this.Settings.CustomReasoningEfforts)
             .Select(NormalizeManualReasoningOptionEntry)
             .Where(entry => !string.IsNullOrWhiteSpace(ParseManualSelectionOption(entry)?.Value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        Settings.CustomVerbosityOptions = NormalizeManualOptionEntries(Settings.CustomVerbosityOptions);
-        Settings.CustomServiceTiers = NormalizeManualOptionEntries(Settings.CustomServiceTiers);
+        this.Settings.CustomVerbosityOptions = NormalizeManualOptionEntries(this.Settings.CustomVerbosityOptions);
+        this.Settings.CustomServiceTiers = NormalizeManualOptionEntries(this.Settings.CustomServiceTiers);
 
-        Settings.ManagedMcpServers = Settings.ManagedMcpServers
+        this.Settings.ManagedMcpServers = this.Settings.ManagedMcpServers
             .Where(server => server is not null)
             .ToList();
 
-        Settings.PreferredMcpServers = Settings.PreferredMcpServers
+        this.Settings.PreferredMcpServers = this.Settings.PreferredMcpServers
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Select(name => name.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1715,7 +1681,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static string EnsureOptionValue(string? currentValue, IEnumerable<SelectionOption> options, string fallbackValue)
     {
-        var normalized = (currentValue ?? string.Empty).Trim();
+        string normalized = (currentValue ?? string.Empty).Trim();
         if (options.Any(option => string.Equals(option.Value, normalized, StringComparison.Ordinal)))
         {
             return normalized;
@@ -1731,10 +1697,10 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static string EnsureKnownOrCustomOptionValue(string? currentValue, IEnumerable<SelectionOption> options, string fallbackValue)
     {
-        var normalized = (currentValue ?? string.Empty).Trim();
+        string normalized = (currentValue ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(normalized))
         {
-            var knownValue = options.FirstOrDefault(option => string.Equals(option.Value, normalized, StringComparison.OrdinalIgnoreCase))?.Value;
+            string? knownValue = options.FirstOrDefault(option => string.Equals(option.Value, normalized, StringComparison.OrdinalIgnoreCase))?.Value;
             return string.IsNullOrWhiteSpace(knownValue) ? normalized : knownValue!;
         }
 
@@ -1751,8 +1717,8 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         IEnumerable<string>? manualOptions,
         string selectedValue)
     {
-        var result = new List<SelectionOption>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        List<SelectionOption> result = [];
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
 
         void AddOption(SelectionOption? option)
         {
@@ -1761,27 +1727,27 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
                 return;
             }
 
-            var value = (option.Value ?? string.Empty).Trim();
+            string value = (option.Value ?? string.Empty).Trim();
             if (!seen.Add(value))
             {
                 return;
             }
 
-            var label = string.IsNullOrWhiteSpace(option.Label) ? value : option.Label.Trim();
+            string label = string.IsNullOrWhiteSpace(option.Label) ? value : option.Label.Trim();
             result.Add(new SelectionOption(label, value));
         }
 
-        foreach (var option in defaultOptions ?? Enumerable.Empty<SelectionOption>())
+        foreach (SelectionOption option in defaultOptions ?? Enumerable.Empty<SelectionOption>())
         {
             AddOption(option);
         }
 
-        foreach (var entry in manualOptions ?? Enumerable.Empty<string>())
+        foreach (string entry in manualOptions ?? Enumerable.Empty<string>())
         {
             AddOption(ParseManualSelectionOption(entry));
         }
 
-        var selected = (selectedValue ?? string.Empty).Trim();
+        string selected = (selectedValue ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(selected))
         {
             AddOption(new SelectionOption(selected + " (custom)", selected));
@@ -1797,18 +1763,18 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             .Select(entry => entry.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList()
-            ?? new List<string>();
+            ?? [];
     }
 
     private static string NormalizeManualReasoningOptionEntry(string entry)
     {
-        var option = ParseManualSelectionOption(entry);
+        SelectionOption? option = ParseManualSelectionOption(entry);
         if (option is null)
         {
             return string.Empty;
         }
 
-        var value = NormalizeReasoningEffortValue(option.Value);
+        string value = NormalizeReasoningEffortValue(option.Value);
         if (string.IsNullOrWhiteSpace(value))
         {
             return string.Empty;
@@ -1821,13 +1787,13 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static SelectionOption? ParseManualSelectionOption(string? entry)
     {
-        var normalized = (entry ?? string.Empty).Trim();
+        string normalized = (entry ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return null;
         }
 
-        var separatorIndex = normalized.IndexOf('|');
+        int separatorIndex = normalized.IndexOf('|');
         if (separatorIndex < 0)
         {
             separatorIndex = normalized.IndexOf('=');
@@ -1835,8 +1801,8 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
         if (separatorIndex > 0 && separatorIndex < normalized.Length - 1)
         {
-            var label = normalized.Substring(0, separatorIndex).Trim();
-            var value = normalized.Substring(separatorIndex + 1).Trim();
+            string label = normalized.Substring(0, separatorIndex).Trim();
+            string value = normalized.Substring(separatorIndex + 1).Trim();
             if (!string.IsNullOrWhiteSpace(value))
             {
                 return new SelectionOption(string.IsNullOrWhiteSpace(label) ? value : label, value);
@@ -1848,7 +1814,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static string NormalizeModelValue(string? value)
     {
-        var normalized = (value ?? string.Empty).Trim();
+        string normalized = (value ?? string.Empty).Trim();
         return string.Equals(normalized, "gpt-5.2 codex", StringComparison.OrdinalIgnoreCase)
             ? "gpt-5.2-codex"
             : normalized;
@@ -1856,24 +1822,18 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static string NormalizeReasoningEffortValue(string? value)
     {
-        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
-        switch (normalized)
+        string normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
         {
-            case "minimum":
-            case "min":
-            case "minimal":
-                return "minimal";
-            case "maximum":
-            case "max":
-                return "xhigh";
-            default:
-                return normalized;
-        }
+            "minimum" or "min" or "minimal" => "minimal",
+            "maximum" or "max" => "xhigh",
+            _ => normalized,
+        };
     }
 
     private static string NormalizeLanguageTag(string? value)
     {
-        var normalized = (value ?? string.Empty).Trim();
+        string normalized = (value ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return string.Empty;
@@ -1889,8 +1849,8 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static string GetOptionLabel(IEnumerable<SelectionOption> options, string? value, string fallbackLabel)
     {
-        var normalized = (value ?? string.Empty).Trim();
-        var label = options.FirstOrDefault(option => string.Equals(option.Value, normalized, StringComparison.OrdinalIgnoreCase))?.Label;
+        string normalized = (value ?? string.Empty).Trim();
+        string? label = options.FirstOrDefault(option => string.Equals(option.Value, normalized, StringComparison.OrdinalIgnoreCase))?.Label;
         if (!string.IsNullOrWhiteSpace(label))
         {
             return label!;
@@ -1901,50 +1861,51 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private string GetLoginExecutablePath()
     {
-        if (!string.IsNullOrWhiteSpace(CodexEnvironmentStatus.ResolvedExecutablePath))
+        if (!string.IsNullOrWhiteSpace(this.CodexEnvironmentStatus.ResolvedExecutablePath))
         {
-            return CodexEnvironmentStatus.ResolvedExecutablePath;
+            return this.CodexEnvironmentStatus.ResolvedExecutablePath;
         }
 
-        return Settings.CodexExecutablePath ?? string.Empty;
+        return this.Settings.CodexExecutablePath ?? string.Empty;
     }
 
     private void ApplyLocalization(string? languageOverride)
     {
-        _localization = new LocalizationService(languageOverride);
-        CultureInfo.CurrentUICulture = _localization.Culture;
-        CultureInfo.CurrentCulture = _localization.Culture;
-        CultureInfo.DefaultThreadCurrentUICulture = _localization.Culture;
-        CultureInfo.DefaultThreadCurrentCulture = _localization.Culture;
-        CodexToolWindowManager.RefreshSettingsToolWindowCaption(_localization);
-        OnPropertyChanged(nameof(Localization));
-        OnPropertyChanged(nameof(ReasoningOptions));
-        OnPropertyChanged(nameof(ReasoningMenuOptions));
-        OnPropertyChanged(nameof(VerbosityOptions));
-        OnPropertyChanged(nameof(ServiceTierOptions));
-        OnPropertyChanged(nameof(ApprovalPolicyOptions));
-        OnPropertyChanged(nameof(SandboxModeOptions));
-        OnPropertyChanged(nameof(LanguageOptions));
-        OnPropertyChanged(nameof(SelectedLanguageTag));
-        OnPropertyChanged(nameof(SelectedReasoningEffortLabel));
-        OnPropertyChanged(nameof(SelectedVerbosityLabel));
-        OnPropertyChanged(nameof(SelectedServiceTierLabel));
-        OnPropertyChanged(nameof(SelectedApprovalPolicyLabel));
-        OnPropertyChanged(nameof(SelectedSandboxModeLabel));
-        OnPropertyChanged(nameof(CollaborationModeLabel));
-        OnPropertyChanged(nameof(SelectedSettingsSectionTitle));
-        OnPropertyChanged(nameof(SettingsWorkspaceTitle));
-        OnPropertyChanged(nameof(CurrentAccountLabel));
-        OnPropertyChanged(nameof(CodexSetupTitle));
-        OnPropertyChanged(nameof(CodexSetupSummary));
-        OnPropertyChanged(nameof(CodexSetupDetail));
-        OnPropertyChanged(nameof(CodexSetupAuthenticationLabel));
-        OnPropertyChanged(nameof(LanguageSearchPlaceholder));
-        OnPropertyChanged(nameof(VisibleThreads));
-        OnPropertyChanged(nameof(VisibleSkills));
-        OnPropertyChanged(nameof(VisibleRemoteSkills));
-        OnPropertyChanged(nameof(VisibleLanguageOptions));
-        OnPropertyChanged(string.Empty);
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        this.Localization = new LocalizationService(languageOverride);
+        CultureInfo.CurrentUICulture = this.Localization.Culture;
+        CultureInfo.CurrentCulture = this.Localization.Culture;
+        CultureInfo.DefaultThreadCurrentUICulture = this.Localization.Culture;
+        CultureInfo.DefaultThreadCurrentCulture = this.Localization.Culture;
+        CodexToolWindowManager.RefreshSettingsToolWindowCaption(this.Localization);
+        this.OnPropertyChanged(nameof(this.Localization));
+        this.OnPropertyChanged(nameof(this.ReasoningOptions));
+        this.OnPropertyChanged(nameof(this.ReasoningMenuOptions));
+        this.OnPropertyChanged(nameof(this.VerbosityOptions));
+        this.OnPropertyChanged(nameof(this.ServiceTierOptions));
+        this.OnPropertyChanged(nameof(this.ApprovalPolicyOptions));
+        this.OnPropertyChanged(nameof(this.SandboxModeOptions));
+        this.OnPropertyChanged(nameof(this.LanguageOptions));
+        this.OnPropertyChanged(nameof(this.SelectedLanguageTag));
+        this.OnPropertyChanged(nameof(this.SelectedReasoningEffortLabel));
+        this.OnPropertyChanged(nameof(this.SelectedVerbosityLabel));
+        this.OnPropertyChanged(nameof(this.SelectedServiceTierLabel));
+        this.OnPropertyChanged(nameof(this.SelectedApprovalPolicyLabel));
+        this.OnPropertyChanged(nameof(this.SelectedSandboxModeLabel));
+        this.OnPropertyChanged(nameof(this.CollaborationModeLabel));
+        this.OnPropertyChanged(nameof(this.SelectedSettingsSectionTitle));
+        this.OnPropertyChanged(nameof(this.SettingsWorkspaceTitle));
+        this.OnPropertyChanged(nameof(this.CurrentAccountLabel));
+        this.OnPropertyChanged(nameof(this.CodexSetupTitle));
+        this.OnPropertyChanged(nameof(this.CodexSetupSummary));
+        this.OnPropertyChanged(nameof(this.CodexSetupDetail));
+        this.OnPropertyChanged(nameof(this.CodexSetupAuthenticationLabel));
+        this.OnPropertyChanged(nameof(this.LanguageSearchPlaceholder));
+        this.OnPropertyChanged(nameof(this.VisibleThreads));
+        this.OnPropertyChanged(nameof(this.VisibleSkills));
+        this.OnPropertyChanged(nameof(this.VisibleRemoteSkills));
+        this.OnPropertyChanged(nameof(this.VisibleLanguageOptions));
+        this.OnPropertyChanged(string.Empty);
     }
 
     private void OpenCodexConfig()
@@ -1952,48 +1913,48 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            _solutionContextService.OpenCodexConfig();
+            this._solutionContextService.OpenCodexConfig();
         });
     }
 
     private void OpenExtensionSettings()
     {
-        SaveSettings();
+        this.SaveSettings();
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            _solutionContextService.OpenPath(_settingsStore.SettingsFilePath);
+            this._solutionContextService.OpenPath(this._settingsStore.SettingsFilePath);
         });
     }
 
     private void OpenSettingsPanel()
     {
-        _pinRecentTasksPreview = false;
-        _showExpandedRecentTasksPreview = false;
-        SelectedSettingsSection = string.Empty;
-        ShowSettingsPanel = true;
-        ShowHistoryPanel = false;
-        OnPropertyChanged(nameof(ShowRecentTasksPreview));
-        OnPropertyChanged(nameof(RecentThreadsPreview));
-        OnPropertyChanged(nameof(HasMoreThreadsThanPreview));
-        OnPropertyChanged(nameof(IsRecentTasksPreviewExpanded));
-        OnPropertyChanged(nameof(IsHistoryViewSelected));
-        OnPropertyChanged(nameof(IsSettingsViewSelected));
+        this._pinRecentTasksPreview = false;
+        this.IsRecentTasksPreviewExpanded = false;
+        this.SelectedSettingsSection = string.Empty;
+        this.ShowSettingsPanel = true;
+        this.ShowHistoryPanel = false;
+        this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
+        this.OnPropertyChanged(nameof(this.RecentThreadsPreview));
+        this.OnPropertyChanged(nameof(this.HasMoreThreadsThanPreview));
+        this.OnPropertyChanged(nameof(this.IsRecentTasksPreviewExpanded));
+        this.OnPropertyChanged(nameof(this.IsHistoryViewSelected));
+        this.OnPropertyChanged(nameof(this.IsSettingsViewSelected));
     }
 
     private void OpenHistoryPanel()
     {
-        _hideRecentTasksPreview = false;
-        _pinRecentTasksPreview = true;
-        _showExpandedRecentTasksPreview = true;
-        ShowHistoryPanel = false;
-        ShowSettingsPanel = false;
-        OnPropertyChanged(nameof(ShowRecentTasksPreview));
-        OnPropertyChanged(nameof(RecentThreadsPreview));
-        OnPropertyChanged(nameof(HasMoreThreadsThanPreview));
-        OnPropertyChanged(nameof(IsRecentTasksPreviewExpanded));
-        OnPropertyChanged(nameof(IsHistoryViewSelected));
-        OnPropertyChanged(nameof(IsSettingsViewSelected));
+        this._hideRecentTasksPreview = false;
+        this._pinRecentTasksPreview = true;
+        this.IsRecentTasksPreviewExpanded = true;
+        this.ShowHistoryPanel = false;
+        this.ShowSettingsPanel = false;
+        this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
+        this.OnPropertyChanged(nameof(this.RecentThreadsPreview));
+        this.OnPropertyChanged(nameof(this.HasMoreThreadsThanPreview));
+        this.OnPropertyChanged(nameof(this.IsRecentTasksPreviewExpanded));
+        this.OnPropertyChanged(nameof(this.IsHistoryViewSelected));
+        this.OnPropertyChanged(nameof(this.IsSettingsViewSelected));
     }
 
     private void OpenCodexDocs()
@@ -2001,7 +1962,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            _solutionContextService.OpenUrl("https://openai.com/codex/get-started/");
+            this._solutionContextService.OpenUrl("https://openai.com/codex/get-started/");
         });
     }
 
@@ -2010,7 +1971,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            _solutionContextService.OpenUrl("https://learn.microsoft.com/visualstudio/ide/identifying-and-customizing-keyboard-shortcuts-in-visual-studio");
+            this._solutionContextService.OpenUrl("https://learn.microsoft.com/visualstudio/ide/identifying-and-customizing-keyboard-shortcuts-in-visual-studio");
         });
     }
 
@@ -2019,7 +1980,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            _solutionContextService.OpenCodexSkillsDirectory();
+            this._solutionContextService.OpenCodexSkillsDirectory();
         });
     }
 
@@ -2033,7 +1994,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            _solutionContextService.OpenPath(path);
+            this._solutionContextService.OpenPath(path);
         });
     }
 
@@ -2047,29 +2008,31 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            if (TryResolveReferencedFile(reference, out var resolved))
+            if (this.TryResolveReferencedFile(reference, out ReferencedFile resolved))
             {
-                _solutionContextService.OpenFileInVisualStudio(resolved.Path, resolved.Line, resolved.Column);
+                this._solutionContextService.OpenFileInVisualStudio(resolved.Path, resolved.Line, resolved.Column);
             }
         });
     }
 
     private bool CanOpenReferencedPath(object? parameter)
     {
+        ThreadHelper.ThrowIfNotOnUIThread();
         return parameter is string reference
-            && TryResolveReferencedFile(reference, out _);
+            && this.TryResolveReferencedFile(reference, out _);
     }
 
     private bool TryResolveReferencedFile(string reference, out ReferencedFile resolved)
     {
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
         resolved = default;
-        var normalized = NormalizeReferencedFileText(reference);
+        string normalized = NormalizeReferencedFileText(reference);
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return false;
         }
 
-        if (Uri.TryCreate(normalized, UriKind.Absolute, out var uri)
+        if (Uri.TryCreate(normalized, UriKind.Absolute, out Uri? uri)
             && string.Equals(uri.Scheme, Uri.UriSchemeFile, StringComparison.OrdinalIgnoreCase))
         {
             normalized = uri.LocalPath + uri.Fragment;
@@ -2081,13 +2044,13 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         }
 
         normalized = DecodeReferencedFileText(normalized);
-        var pathText = StripReferencedFilePosition(normalized, out var line, out var column);
+        string pathText = StripReferencedFilePosition(normalized, out int? line, out int? column);
         pathText = NormalizeReferencedPathText(DecodeReferencedFileText(pathText));
-        foreach (var candidate in GetReferencedFileCandidates(pathText))
+        foreach (string candidate in this.GetReferencedFileCandidates(pathText))
         {
             try
             {
-                var fullPath = Path.GetFullPath(candidate);
+                string fullPath = Path.GetFullPath(candidate);
                 if (File.Exists(fullPath))
                 {
                     resolved = new ReferencedFile(fullPath, line, column);
@@ -2104,12 +2067,13 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private IEnumerable<string> GetReferencedFileCandidates(string pathText)
     {
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
         if (string.IsNullOrWhiteSpace(pathText))
         {
             yield break;
         }
 
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
         if (Path.IsPathRooted(pathText))
         {
             if (seen.Add(pathText))
@@ -2119,28 +2083,28 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             yield break;
         }
 
-        var workingDirectory = (Settings.WorkingDirectory ?? string.Empty).Trim();
+        string workingDirectory = (this.Settings.WorkingDirectory ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(workingDirectory))
         {
-            var candidate = Path.Combine(workingDirectory, pathText);
+            string candidate = Path.Combine(workingDirectory, pathText);
             if (seen.Add(candidate))
             {
                 yield return candidate;
             }
         }
 
-        var solutionDirectory = _solutionContextService.TryGetSolutionDirectory();
+        string? solutionDirectory = this._solutionContextService.TryGetSolutionDirectory();
         if (!string.IsNullOrWhiteSpace(solutionDirectory)
             && !string.Equals(solutionDirectory, workingDirectory, StringComparison.OrdinalIgnoreCase))
         {
-            var candidate = Path.Combine(solutionDirectory, pathText);
+            string candidate = Path.Combine(solutionDirectory, pathText);
             if (seen.Add(candidate))
             {
                 yield return candidate;
             }
         }
 
-        foreach (var candidate in GetSolutionFileReferenceCandidates(pathText, solutionDirectory))
+        foreach (string candidate in this.GetSolutionFileReferenceCandidates(pathText, solutionDirectory))
         {
             if (seen.Add(candidate))
             {
@@ -2163,16 +2127,16 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         column = null;
         reference = StripReferencedFileFragmentPosition(reference, out line, out column);
 
-        var match = Regex.Match(reference, @"^(?<path>.+?)(?::(?<line>\d+)(?::(?<column>\d+))?)$");
+        Match match = Regex.Match(reference, @"^(?<path>.+?)(?::(?<line>\d+)(?::(?<column>\d+))?)$");
         if (!match.Success)
         {
             return reference;
         }
 
-        line = int.TryParse(match.Groups["line"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLine)
+        line = int.TryParse(match.Groups["line"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedLine)
             ? parsedLine
             : null;
-        column = int.TryParse(match.Groups["column"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedColumn)
+        column = int.TryParse(match.Groups["column"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedColumn)
             ? parsedColumn
             : null;
         return match.Groups["path"].Value;
@@ -2180,13 +2144,14 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private IEnumerable<string> GetSolutionFileReferenceCandidates(string pathText, string? solutionDirectory)
     {
-        var normalizedReference = NormalizeReferenceForComparison(pathText);
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        string normalizedReference = NormalizeReferenceForComparison(pathText);
         if (string.IsNullOrWhiteSpace(normalizedReference))
         {
             yield break;
         }
 
-        foreach (var candidate in _solutionContextService.GetSolutionFilePaths()
+        foreach (var candidate in this._solutionContextService.GetSolutionFilePaths()
             .Select(path => new
             {
                 Path = path,
@@ -2202,7 +2167,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static int ScoreSolutionFileReference(string filePath, string normalizedReference, string? solutionDirectory)
     {
-        var normalizedFullPath = NormalizeReferenceForComparison(filePath);
+        string normalizedFullPath = NormalizeReferenceForComparison(filePath);
         if (string.Equals(normalizedFullPath, normalizedReference, StringComparison.OrdinalIgnoreCase))
         {
             return 0;
@@ -2210,12 +2175,12 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
         if (!string.IsNullOrWhiteSpace(solutionDirectory))
         {
-            var solutionRoot = solutionDirectory!;
+            string solutionRoot = solutionDirectory!;
             if (filePath.StartsWith(solutionRoot, StringComparison.OrdinalIgnoreCase))
             {
-                var relativePath = filePath.Substring(solutionRoot.Length)
+                string relativePath = filePath.Substring(solutionRoot.Length)
                     .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                var normalizedRelativePath = NormalizeReferenceForComparison(relativePath);
+                string normalizedRelativePath = NormalizeReferenceForComparison(relativePath);
                 if (string.Equals(normalizedRelativePath, normalizedReference, StringComparison.OrdinalIgnoreCase))
                 {
                     return 1;
@@ -2223,7 +2188,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             }
         }
 
-        var includesDirectory = normalizedReference.IndexOf('/') >= 0;
+        bool includesDirectory = normalizedReference.IndexOf('/') >= 0;
         if (includesDirectory
             && normalizedFullPath.EndsWith("/" + normalizedReference, StringComparison.OrdinalIgnoreCase))
         {
@@ -2244,21 +2209,21 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         line = null;
         column = null;
 
-        var hashIndex = reference.IndexOf('#');
+        int hashIndex = reference.IndexOf('#');
         if (hashIndex < 0)
         {
             return reference;
         }
 
-        var fragment = reference.Substring(hashIndex + 1);
-        var path = reference.Substring(0, hashIndex);
-        var match = Regex.Match(fragment, @"^L?(?<line>\d+)(?:(?:C|:)(?<column>\d+))?", RegexOptions.IgnoreCase);
+        string fragment = reference.Substring(hashIndex + 1);
+        string path = reference.Substring(0, hashIndex);
+        Match match = Regex.Match(fragment, @"^L?(?<line>\d+)(?:(?:C|:)(?<column>\d+))?", RegexOptions.IgnoreCase);
         if (match.Success)
         {
-            line = int.TryParse(match.Groups["line"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLine)
+            line = int.TryParse(match.Groups["line"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedLine)
                 ? parsedLine
                 : null;
-            column = int.TryParse(match.Groups["column"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedColumn)
+            column = int.TryParse(match.Groups["column"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedColumn)
                 ? parsedColumn
                 : null;
         }
@@ -2280,7 +2245,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static string NormalizeReferencedPathText(string pathText)
     {
-        var normalized = (pathText ?? string.Empty).Trim();
+        string normalized = (pathText ?? string.Empty).Trim();
         while (normalized.StartsWith("./", StringComparison.Ordinal)
             || normalized.StartsWith(".\\", StringComparison.Ordinal))
         {
@@ -2292,7 +2257,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static string NormalizeReferenceForComparison(string pathText)
     {
-        var normalized = NormalizeReferencedPathText(pathText)
+        string normalized = NormalizeReferencedPathText(pathText)
             .Replace('\\', '/')
             .Trim();
 
@@ -2308,9 +2273,9 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         public ReferencedFile(string path, int? line, int? column)
         {
-            Path = path;
-            Line = line;
-            Column = column;
+            this.Path = path;
+            this.Line = line;
+            this.Column = column;
         }
 
         public string Path { get; }
@@ -2322,72 +2287,72 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private void RefreshIntegrations()
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
         {
-            await RefreshCodexStatusAsync().ConfigureAwait(false);
-            if (!IsCodexReady)
+            await this.RefreshCodexStatusAsync().ConfigureAwait(false);
+            if (!this.IsCodexReady)
             {
-                ClearServerSurfaces();
+                this.ClearServerSurfaces();
                 return;
             }
 
-            await RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
+            await this.RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
         });
     }
 
     private void RefreshCodexStatus()
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(RefreshCodexStatusAsync);
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(this.RefreshCodexStatusAsync);
     }
 
     private void RefreshModels(object? _)
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(() => RefreshModelOptionsAsync(force: true));
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(() => this.RefreshModelOptionsAsync(force: true));
     }
 
     private void AddCustomModel(object? _)
     {
-        var model = NormalizeModelValue(string.IsNullOrWhiteSpace(CustomModelInput) ? SelectedModel : CustomModelInput);
+        string model = NormalizeModelValue(string.IsNullOrWhiteSpace(this.CustomModelInput) ? this.SelectedModel : this.CustomModelInput);
         if (string.IsNullOrWhiteSpace(model))
         {
             return;
         }
 
-        AddCustomModelToSettings(model);
-        SelectedModel = model;
-        CustomModelInput = string.Empty;
-        ReplaceModelOptions(MergeModelOptions(
-            ModelOptions,
+        this.AddCustomModelToSettings(model);
+        this.SelectedModel = model;
+        this.CustomModelInput = string.Empty;
+        this.ReplaceModelOptions(MergeModelOptions(
+            this.ModelOptions,
             CreateFallbackModelOptions(),
-            Settings.CustomModels,
-            SelectedModel));
-        ModelRefreshStatus = "Modelo personalizado adicionado.";
-        SaveSettings();
+            this.Settings.CustomModels,
+            this.SelectedModel));
+        this.ModelRefreshStatus = "Modelo personalizado adicionado.";
+        this.SaveSettings();
     }
 
     private void RemoveCustomModel(object? parameter)
     {
-        var model = NormalizeModelValue(parameter as string);
+        string model = NormalizeModelValue(parameter as string);
         if (string.IsNullOrWhiteSpace(model)
-            || string.Equals(model, SelectedModel, StringComparison.OrdinalIgnoreCase))
+            || string.Equals(model, this.SelectedModel, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
-        Settings.CustomModels = Settings.CustomModels
+        this.Settings.CustomModels = this.Settings.CustomModels
             .Where(item => !string.Equals(item, model, StringComparison.OrdinalIgnoreCase))
             .ToList();
-        ReplaceModelOptions(MergeModelOptions(
-            ModelOptions,
+        this.ReplaceModelOptions(MergeModelOptions(
+            this.ModelOptions,
             CreateFallbackModelOptions(),
-            Settings.CustomModels,
-            SelectedModel));
-        SaveSettings();
+            this.Settings.CustomModels,
+            this.SelectedModel));
+        this.SaveSettings();
     }
 
     private void RunCodexLogin(object? _)
     {
-        var executablePath = GetLoginExecutablePath();
+        string executablePath = this.GetLoginExecutablePath();
         if (string.IsNullOrWhiteSpace(executablePath))
         {
             return;
@@ -2396,46 +2361,46 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            _codexEnvironmentService.LaunchLoginTerminal(executablePath);
+            this._codexEnvironmentService.LaunchLoginTerminal(executablePath);
         });
     }
 
     private void LogOutAndLogin(object? _)
     {
-        var executablePath = GetLoginExecutablePath();
+        string executablePath = this.GetLoginExecutablePath();
         if (string.IsNullOrWhiteSpace(executablePath))
         {
             return;
         }
 
-        ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
         {
             try
             {
-                _codexEnvironmentService.DeleteAuthFile(CodexEnvironmentStatus.AuthFilePath);
+                this._codexEnvironmentService.DeleteAuthFile(this.CodexEnvironmentStatus.AuthFilePath);
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                _codexEnvironmentService.LaunchLoginTerminal(executablePath);
-                await RefreshCodexStatusAsync().ConfigureAwait(false);
+                this._codexEnvironmentService.LaunchLoginTerminal(executablePath);
+                await this.RefreshCodexStatusAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                AppendOutput("[" + _localization.OutputTagAuth + "] " + ex.Message + Environment.NewLine);
+                this.AppendOutput("[" + this.Localization.OutputTagAuth + "] " + ex.Message + Environment.NewLine);
             }
         });
     }
 
     private void LogOut(object? _)
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
         {
             try
             {
-                _codexEnvironmentService.DeleteAuthFile(CodexEnvironmentStatus.AuthFilePath);
-                await RefreshCodexStatusAsync().ConfigureAwait(false);
+                this._codexEnvironmentService.DeleteAuthFile(this.CodexEnvironmentStatus.AuthFilePath);
+                await this.RefreshCodexStatusAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                AppendOutput("[" + _localization.OutputTagAuth + "] " + ex.Message + Environment.NewLine);
+                this.AppendOutput("[" + this.Localization.OutputTagAuth + "] " + ex.Message + Environment.NewLine);
             }
         });
     }
@@ -2445,20 +2410,20 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         ThreadHelper.JoinableTaskFactory.Run(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            Clipboard.SetText(CodexSetupInstallCommand);
+            Clipboard.SetText(this.CodexSetupInstallCommand);
         });
     }
 
     private void AddManagedMcp(object? parameter)
     {
-        var transport = string.Equals(parameter as string, "url", StringComparison.OrdinalIgnoreCase)
+        string transport = string.Equals(parameter as string, "url", StringComparison.OrdinalIgnoreCase)
             ? "url"
             : "stdio";
 
-        ManagedMcpServers.Add(new CodexManagedMcpServer
+        this.ManagedMcpServers.Add(new CodexManagedMcpServer
         {
             Enabled = true,
-            Name = transport == "url" ? _localization.ManagedMcpDefaultUrlName : _localization.ManagedMcpDefaultName,
+            Name = transport == "url" ? this.Localization.ManagedMcpDefaultUrlName : this.Localization.ManagedMcpDefaultName,
             TransportType = transport
         });
     }
@@ -2467,18 +2432,18 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         if (parameter is CodexManagedMcpServer server)
         {
-            ManagedMcpServers.Remove(server);
+            _ = this.ManagedMcpServers.Remove(server);
         }
     }
 
     private void CreateSkill(object? _)
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(CreateSkillAsync);
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(this.CreateSkillAsync);
     }
 
     private async Task CreateSkillAsync()
     {
-        if (!CanCreateSkill())
+        if (!this.CanCreateSkill())
         {
             return;
         }
@@ -2486,85 +2451,85 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         try
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            var skillFile = _solutionContextService.CreateSkillTemplate(NewSkillName, NewSkillDescription);
-            NewSkillName = string.Empty;
-            NewSkillDescription = string.Empty;
-            _codexProcessService.InvalidateSkillsCache();
-            _solutionContextService.OpenPath(skillFile);
-            await RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
+            string skillFile = this._solutionContextService.CreateSkillTemplate(this.NewSkillName, this.NewSkillDescription);
+            this.NewSkillName = string.Empty;
+            this.NewSkillDescription = string.Empty;
+            this._codexProcessService.InvalidateSkillsCache();
+            this._solutionContextService.OpenPath(skillFile);
+            await this.RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            AppendOutput("[" + _localization.OutputTagSkills + "] " + ex.Message + Environment.NewLine);
+            this.AppendOutput("[" + this.Localization.OutputTagSkills + "] " + ex.Message + Environment.NewLine);
         }
     }
 
     private bool CanCreateSkill()
     {
-        return SolutionContextService.IsValidSkillName(NewSkillName);
+        return SolutionContextService.IsValidSkillName(this.NewSkillName);
     }
 
     private void ToggleHistoryPanel()
     {
-        var nextState = !_pinRecentTasksPreview || !ShowRecentTasksPreview;
-        _pinRecentTasksPreview = nextState;
-        _hideRecentTasksPreview = !nextState;
+        bool nextState = !this._pinRecentTasksPreview || !this.ShowRecentTasksPreview;
+        this._pinRecentTasksPreview = nextState;
+        this._hideRecentTasksPreview = !nextState;
         if (!nextState)
         {
-            _showExpandedRecentTasksPreview = false;
+            this.IsRecentTasksPreviewExpanded = false;
         }
 
-        ShowHistoryPanel = false;
+        this.ShowHistoryPanel = false;
         if (nextState)
         {
-            ShowSettingsPanel = false;
+            this.ShowSettingsPanel = false;
         }
 
-        OnPropertyChanged(nameof(ShowRecentTasksPreview));
-        OnPropertyChanged(nameof(RecentThreadsPreview));
-        OnPropertyChanged(nameof(HasMoreThreadsThanPreview));
-        OnPropertyChanged(nameof(IsRecentTasksPreviewExpanded));
-        OnPropertyChanged(nameof(IsHistoryViewSelected));
-        OnPropertyChanged(nameof(IsSettingsViewSelected));
+        this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
+        this.OnPropertyChanged(nameof(this.RecentThreadsPreview));
+        this.OnPropertyChanged(nameof(this.HasMoreThreadsThanPreview));
+        this.OnPropertyChanged(nameof(this.IsRecentTasksPreviewExpanded));
+        this.OnPropertyChanged(nameof(this.IsHistoryViewSelected));
+        this.OnPropertyChanged(nameof(this.IsSettingsViewSelected));
     }
 
     private void ToggleSettingsPanel()
     {
-        var nextState = !ShowSettingsPanel;
-        _pinRecentTasksPreview = false;
-        _showExpandedRecentTasksPreview = false;
-        ShowSettingsPanel = nextState;
+        bool nextState = !this.ShowSettingsPanel;
+        this._pinRecentTasksPreview = false;
+        this.IsRecentTasksPreviewExpanded = false;
+        this.ShowSettingsPanel = nextState;
         if (nextState)
         {
-            ShowHistoryPanel = false;
-            SelectedSettingsSection = string.Empty;
+            this.ShowHistoryPanel = false;
+            this.SelectedSettingsSection = string.Empty;
         }
 
-        OnPropertyChanged(nameof(ShowRecentTasksPreview));
-        OnPropertyChanged(nameof(RecentThreadsPreview));
-        OnPropertyChanged(nameof(HasMoreThreadsThanPreview));
-        OnPropertyChanged(nameof(IsRecentTasksPreviewExpanded));
-        OnPropertyChanged(nameof(IsHistoryViewSelected));
-        OnPropertyChanged(nameof(IsSettingsViewSelected));
+        this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
+        this.OnPropertyChanged(nameof(this.RecentThreadsPreview));
+        this.OnPropertyChanged(nameof(this.HasMoreThreadsThanPreview));
+        this.OnPropertyChanged(nameof(this.IsRecentTasksPreviewExpanded));
+        this.OnPropertyChanged(nameof(this.IsHistoryViewSelected));
+        this.OnPropertyChanged(nameof(this.IsSettingsViewSelected));
     }
 
     private void CloseSidebar()
     {
-        ShowHistoryPanel = false;
-        ShowSettingsPanel = false;
-        _pinRecentTasksPreview = false;
-        _showExpandedRecentTasksPreview = false;
-        OnPropertyChanged(nameof(ShowRecentTasksPreview));
-        OnPropertyChanged(nameof(RecentThreadsPreview));
-        OnPropertyChanged(nameof(HasMoreThreadsThanPreview));
-        OnPropertyChanged(nameof(IsRecentTasksPreviewExpanded));
-        OnPropertyChanged(nameof(IsHistoryViewSelected));
-        OnPropertyChanged(nameof(IsSettingsViewSelected));
+        this.ShowHistoryPanel = false;
+        this.ShowSettingsPanel = false;
+        this._pinRecentTasksPreview = false;
+        this.IsRecentTasksPreviewExpanded = false;
+        this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
+        this.OnPropertyChanged(nameof(this.RecentThreadsPreview));
+        this.OnPropertyChanged(nameof(this.HasMoreThreadsThanPreview));
+        this.OnPropertyChanged(nameof(this.IsRecentTasksPreviewExpanded));
+        this.OnPropertyChanged(nameof(this.IsHistoryViewSelected));
+        this.OnPropertyChanged(nameof(this.IsSettingsViewSelected));
     }
 
     private void CloseSettingsDetail()
     {
-        SelectedSettingsSection = string.Empty;
+        this.SelectedSettingsSection = string.Empty;
     }
 
     private void SelectSettingsSection(object? parameter)
@@ -2576,23 +2541,23 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
         if ((string.Equals(section, SettingsSectionCodexMenu, StringComparison.Ordinal)
                 || string.Equals(section, SettingsSectionLanguage, StringComparison.Ordinal))
-            && string.Equals(SelectedSettingsSection, section, StringComparison.Ordinal))
+            && string.Equals(this.SelectedSettingsSection, section, StringComparison.Ordinal))
         {
-            SelectedSettingsSection = string.Empty;
+            this.SelectedSettingsSection = string.Empty;
         }
         else
         {
-            SelectedSettingsSection = section;
+            this.SelectedSettingsSection = section;
         }
 
-        ShowSettingsPanel = true;
-        ShowHistoryPanel = false;
-        OnPropertyChanged(nameof(IsHistoryViewSelected));
-        OnPropertyChanged(nameof(IsSettingsViewSelected));
+        this.ShowSettingsPanel = true;
+        this.ShowHistoryPanel = false;
+        this.OnPropertyChanged(nameof(this.IsHistoryViewSelected));
+        this.OnPropertyChanged(nameof(this.IsSettingsViewSelected));
 
         if (IsExternalSettingsSection(section))
         {
-            PrepareExternalSettingsSection(section);
+            this.PrepareExternalSettingsSection(section);
             CodexToolWindowManager.ShowSettingsToolWindow(section);
         }
     }
@@ -2604,10 +2569,10 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        SelectedSettingsSection = section;
-        ShowSettingsPanel = false;
-        ShowHistoryPanel = false;
-        PrepareExternalSettingsSection(section);
+        this.SelectedSettingsSection = section;
+        this.ShowSettingsPanel = false;
+        this.ShowHistoryPanel = false;
+        this.PrepareExternalSettingsSection(section);
     }
 
     private static bool IsExternalSettingsSection(string section)
@@ -2623,20 +2588,20 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         if (string.Equals(section, SettingsSectionMcp, StringComparison.Ordinal)
             || string.Equals(section, SettingsSectionSkills, StringComparison.Ordinal))
         {
-            RefreshIntegrations();
+            this.RefreshIntegrations();
             return;
         }
 
         if (string.Equals(section, SettingsSectionAccount, StringComparison.Ordinal)
             || string.Equals(section, SettingsSectionCodex, StringComparison.Ordinal))
         {
-            RefreshCodexStatus();
+            this.RefreshCodexStatus();
         }
     }
 
     private void TogglePreferredMcp(object? parameter)
     {
-        var serverName = parameter switch
+        string serverName = parameter switch
         {
             CodexMcpServerSummary server => server.Name,
             string value => value,
@@ -2648,8 +2613,8 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        var preferredServers = Settings.PreferredMcpServers;
-        var existingIndex = preferredServers.FindIndex(name => string.Equals(name, serverName, StringComparison.OrdinalIgnoreCase));
+        List<string> preferredServers = this.Settings.PreferredMcpServers;
+        int existingIndex = preferredServers.FindIndex(name => string.Equals(name, serverName, StringComparison.OrdinalIgnoreCase));
         if (existingIndex >= 0)
         {
             preferredServers.RemoveAt(existingIndex);
@@ -2659,17 +2624,17 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             preferredServers.Add(serverName);
         }
 
-        SyncMcpShortcutSelections();
-        OnPropertyChanged(nameof(HasPreferredMcpServers));
-        OnPropertyChanged(nameof(PreferredMcpServers));
-        SaveSettings();
+        this.SyncMcpShortcutSelections();
+        this.OnPropertyChanged(nameof(this.HasPreferredMcpServers));
+        this.OnPropertyChanged(nameof(this.PreferredMcpServers));
+        this.SaveSettings();
     }
 
     private void SelectReasoningEffort(object? parameter)
     {
         if (parameter is string value)
         {
-            SelectedReasoningEffort = value;
+            this.SelectedReasoningEffort = value;
         }
     }
 
@@ -2677,7 +2642,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         if (parameter is string value)
         {
-            SelectedVerbosity = value;
+            this.SelectedVerbosity = value;
         }
     }
 
@@ -2685,7 +2650,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         if (parameter is string value)
         {
-            SelectedApprovalPolicy = value;
+            this.SelectedApprovalPolicy = value;
         }
     }
 
@@ -2693,15 +2658,16 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         if (parameter is string value)
         {
-            SelectedSandboxMode = value;
+            this.SelectedSandboxMode = value;
         }
     }
 
     private void SelectLanguage(object? parameter)
     {
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
         if (parameter is string value)
         {
-            SelectedLanguageTag = value;
+            this.SelectedLanguageTag = value;
         }
     }
 
@@ -2712,24 +2678,24 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        ThreadHelper.JoinableTaskFactory.RunAsync(() => ToggleSkillEnabledAsync(skill));
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(() => this.ToggleSkillEnabledAsync(skill));
     }
 
     private async Task ToggleSkillEnabledAsync(CodexSkillSummary skill)
     {
-        var requestedValue = skill.IsEnabled;
+        bool requestedValue = skill.IsEnabled;
 
         try
         {
-            var effectiveValue = await _codexProcessService.SetSkillEnabledAsync(Settings, skill.Path, requestedValue, CancellationToken.None).ConfigureAwait(false);
+            bool effectiveValue = await this._codexProcessService.SetSkillEnabledAsync(this.Settings, skill.Path, requestedValue, CancellationToken.None).ConfigureAwait(false);
             RunOnUiThread(() => skill.IsEnabled = effectiveValue);
-            _codexProcessService.InvalidateSkillsCache();
-            await RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
+            this._codexProcessService.InvalidateSkillsCache();
+            await this.RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             RunOnUiThread(() => skill.IsEnabled = !requestedValue);
-            AppendOutput("[" + _localization.OutputTagSkills + "] " + ex.Message + Environment.NewLine);
+            this.AppendOutput("[" + this.Localization.OutputTagSkills + "] " + ex.Message + Environment.NewLine);
         }
     }
 
@@ -2740,25 +2706,25 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        ThreadHelper.JoinableTaskFactory.RunAsync(() => InstallRemoteSkillAsync(skill));
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(() => this.InstallRemoteSkillAsync(skill));
     }
 
     private async Task InstallRemoteSkillAsync(CodexRemoteSkillSummary skill)
     {
         try
         {
-            var path = await _codexProcessService.InstallRemoteSkillAsync(Settings, skill.Id, CancellationToken.None).ConfigureAwait(false);
+            string? path = await this._codexProcessService.InstallRemoteSkillAsync(this.Settings, skill.Id, CancellationToken.None).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(path))
             {
-                _solutionContextService.OpenPath(path);
+                this._solutionContextService.OpenPath(path);
             }
 
-            _codexProcessService.InvalidateSkillsCache();
-            await RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
+            this._codexProcessService.InvalidateSkillsCache();
+            await this.RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            AppendOutput("[" + _localization.OutputTagRemoteSkills + "] " + ex.Message + Environment.NewLine);
+            this.AppendOutput("[" + this.Localization.OutputTagRemoteSkills + "] " + ex.Message + Environment.NewLine);
         }
     }
 
@@ -2766,63 +2732,63 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         try
         {
-            await InitializeAsync().ConfigureAwait(false);
+            await this.InitializeAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            ActivityLog.TryLogError("CodexVsix", _localization.AsyncPanelInitializeLogMessage + Environment.NewLine + ex);
-            AppendOutput("[" + _localization.OutputTagInit + "] " + ex.Message + Environment.NewLine);
-            CodexEnvironmentStatus = new CodexEnvironmentStatus
+            _ = ActivityLog.TryLogError("CodexVsix", this.Localization.AsyncPanelInitializeLogMessage + Environment.NewLine + ex);
+            this.AppendOutput("[" + this.Localization.OutputTagInit + "] " + ex.Message + Environment.NewLine);
+            this.CodexEnvironmentStatus = new CodexEnvironmentStatus
             {
                 Stage = CodexSetupStage.Error,
                 ErrorDetail = ex.Message
             };
-            ClearServerSurfaces();
+            this.ClearServerSurfaces();
         }
     }
 
     private async Task InitializeAsync()
     {
-        Settings.CurrentThreadId = string.Empty;
-        Settings.LastThreadWorkingDirectory = Settings.WorkingDirectory;
-        _codexProcessService.ResetThread();
+        this.Settings.CurrentThreadId = string.Empty;
+        this.Settings.LastThreadWorkingDirectory = this.Settings.WorkingDirectory;
+        this._codexProcessService.ResetThread();
 
-        await RefreshCodexStatusAsync().ConfigureAwait(false);
-        if (!IsCodexReady)
+        await this.RefreshCodexStatusAsync().ConfigureAwait(false);
+        if (!this.IsCodexReady)
         {
-            ClearServerSurfaces();
+            this.ClearServerSurfaces();
             return;
         }
 
-        await RefreshModelOptionsAsync().ConfigureAwait(false);
-        await RefreshThreadsAsync(null).ConfigureAwait(false);
-        await RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
-        _hasLoadedStartupSurfaces = true;
+        await this.RefreshModelOptionsAsync().ConfigureAwait(false);
+        await this.RefreshThreadsAsync(null).ConfigureAwait(false);
+        await this.RefreshServerSurfacesAsync(forceSkillReload: true).ConfigureAwait(false);
+        this._hasLoadedStartupSurfaces = true;
     }
 
     private async Task RefreshCodexStatusAsync()
     {
         try
         {
-            var status = await _codexEnvironmentService.InspectAsync(Settings, CancellationToken.None).ConfigureAwait(false);
+            CodexEnvironmentStatus status = await this._codexEnvironmentService.InspectAsync(this.Settings, CancellationToken.None).ConfigureAwait(false);
             RunOnUiThread(() =>
             {
-                CodexEnvironmentStatus = status;
-                HasCompletedEnvironmentCheck = true;
+                this.CodexEnvironmentStatus = status;
+                this.HasCompletedEnvironmentCheck = true;
             });
         }
         catch (Exception ex)
         {
             RunOnUiThread(() =>
             {
-                CodexEnvironmentStatus = new CodexEnvironmentStatus
+                this.CodexEnvironmentStatus = new CodexEnvironmentStatus
                 {
                     Stage = CodexSetupStage.Error,
-                    ConfiguredExecutablePath = Settings.CodexExecutablePath ?? string.Empty,
-                    AuthFilePath = _codexEnvironmentService.GetAuthFilePath(Settings.EnvironmentVariables),
+                    ConfiguredExecutablePath = this.Settings.CodexExecutablePath ?? string.Empty,
+                    AuthFilePath = this._codexEnvironmentService.GetAuthFilePath(this.Settings.EnvironmentVariables),
                     ErrorDetail = ex.Message
                 };
-                HasCompletedEnvironmentCheck = true;
+                this.HasCompletedEnvironmentCheck = true;
             });
         }
     }
@@ -2831,152 +2797,152 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         RunOnUiThread(() =>
         {
-            Apps.Clear();
-            McpServers.Clear();
-            Skills.Clear();
-            RemoteSkills.Clear();
-            DetectedPromptSkills.Clear();
-            RateLimitSummary = new CodexRateLimitSummary();
-            PromptDisplayText = string.Empty;
-            _hasLoadedStartupSurfaces = false;
-            OnPropertyChanged(nameof(HasDetectedPromptSkills));
-            OnPropertyChanged(nameof(HasRemoteSkills));
-            OnPropertyChanged(nameof(VisibleSkills));
-            OnPropertyChanged(nameof(VisibleRemoteSkills));
+            this.Apps.Clear();
+            this.McpServers.Clear();
+            this.Skills.Clear();
+            this.RemoteSkills.Clear();
+            this.DetectedPromptSkills.Clear();
+            this.RateLimitSummary = new CodexRateLimitSummary();
+            this.PromptDisplayText = string.Empty;
+            this._hasLoadedStartupSurfaces = false;
+            this.OnPropertyChanged(nameof(this.HasDetectedPromptSkills));
+            this.OnPropertyChanged(nameof(this.HasRemoteSkills));
+            this.OnPropertyChanged(nameof(this.VisibleSkills));
+            this.OnPropertyChanged(nameof(this.VisibleRemoteSkills));
         });
     }
 
     public void EnsureToolWindowStartupState()
     {
-        if (_isToolWindowStartupRefreshInProgress)
+        if (this._isToolWindowStartupRefreshInProgress)
         {
             return;
         }
 
         // Rehydrate status/surfaces when the tool window is shown again, but avoid
         // repeating expensive startup calls once the current session is already loaded.
-        if (HasCompletedEnvironmentCheck && (IsCodexReady ? _hasLoadedStartupSurfaces : true))
+        if (this.HasCompletedEnvironmentCheck && (this.IsCodexReady ? this._hasLoadedStartupSurfaces : true))
         {
             return;
         }
 
-        _isToolWindowStartupRefreshInProgress = true;
-        ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
+        this._isToolWindowStartupRefreshInProgress = true;
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
         {
             try
             {
-                await RefreshCodexStatusAsync().ConfigureAwait(false);
-                if (!IsCodexReady)
+                await this.RefreshCodexStatusAsync().ConfigureAwait(false);
+                if (!this.IsCodexReady)
                 {
-                    ClearServerSurfaces();
+                    this.ClearServerSurfaces();
                     return;
                 }
 
-                if (_hasLoadedStartupSurfaces)
+                if (this._hasLoadedStartupSurfaces)
                 {
                     return;
                 }
 
-                await RefreshModelOptionsAsync().ConfigureAwait(false);
-                await RefreshThreadsAsync(null).ConfigureAwait(false);
-                await RefreshServerSurfacesAsync(forceSkillReload: false).ConfigureAwait(false);
-                _hasLoadedStartupSurfaces = true;
+                await this.RefreshModelOptionsAsync().ConfigureAwait(false);
+                await this.RefreshThreadsAsync(null).ConfigureAwait(false);
+                await this.RefreshServerSurfacesAsync(forceSkillReload: false).ConfigureAwait(false);
+                this._hasLoadedStartupSurfaces = true;
             }
             catch (Exception ex)
             {
-                AppendOutput("[" + _localization.OutputTagInit + "] " + ex.Message + Environment.NewLine);
+                this.AppendOutput("[" + this.Localization.OutputTagInit + "] " + ex.Message + Environment.NewLine);
             }
             finally
             {
-                RunOnUiThread(() => _isToolWindowStartupRefreshInProgress = false);
+                RunOnUiThread(() => this._isToolWindowStartupRefreshInProgress = false);
             }
         });
     }
 
     private async Task RefreshModelOptionsAsync(bool force = false)
     {
-        if (IsRefreshingModels && !force)
+        if (this.IsRefreshingModels && !force)
         {
             return;
         }
 
         RunOnUiThread(() =>
         {
-            IsRefreshingModels = true;
-            ModelRefreshStatus = "Atualizando modelos...";
+            this.IsRefreshingModels = true;
+            this.ModelRefreshStatus = "Atualizando modelos...";
         });
 
         try
         {
-            if (!IsCodexReady)
+            if (!this.IsCodexReady)
             {
                 RunOnUiThread(() =>
                 {
-                    if (ModelOptions.Count == 0)
+                    if (this.ModelOptions.Count == 0)
                     {
-                        ReplaceModelOptions(MergeModelOptions(
+                        this.ReplaceModelOptions(MergeModelOptions(
                             Enumerable.Empty<SelectionOption>(),
                             CreateFallbackModelOptions(),
-                            Settings.CustomModels,
-                            SelectedModel));
+                            this.Settings.CustomModels,
+                            this.SelectedModel));
                     }
 
-                    ModelRefreshStatus = "Codex não está pronto. Mantendo modelos locais.";
+                    this.ModelRefreshStatus = "Codex não está pronto. Mantendo modelos locais.";
                 });
                 return;
             }
 
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            var models = await _codexProcessService.ListModelsAsync(Settings, timeout.Token, Settings.IncludeHiddenModels).ConfigureAwait(false);
+            using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15));
+            IReadOnlyList<SelectionOption> models = await this._codexProcessService.ListModelsAsync(this.Settings, timeout.Token, this.Settings.IncludeHiddenModels).ConfigureAwait(false);
             if (models.Count == 0)
             {
                 RunOnUiThread(() =>
                 {
-                    if (ModelOptions.Count == 0)
+                    if (this.ModelOptions.Count == 0)
                     {
-                        ReplaceModelOptions(MergeModelOptions(
+                        this.ReplaceModelOptions(MergeModelOptions(
                             Enumerable.Empty<SelectionOption>(),
                             CreateFallbackModelOptions(),
-                            Settings.CustomModels,
-                            SelectedModel));
+                            this.Settings.CustomModels,
+                            this.SelectedModel));
                     }
 
-                    ModelRefreshStatus = "Nenhum modelo remoto retornado. Mantendo lista atual.";
+                    this.ModelRefreshStatus = "Nenhum modelo remoto retornado. Mantendo lista atual.";
                 });
                 return;
             }
 
             RunOnUiThread(() =>
             {
-                ReplaceModelOptions(MergeModelOptions(
+                this.ReplaceModelOptions(MergeModelOptions(
                     models,
                     CreateFallbackModelOptions(),
-                    Settings.CustomModels,
-                    SelectedModel));
-                ModelRefreshStatus = "Modelos atualizados pelo Codex.";
-                OnPropertyChanged(nameof(SelectedModelLabel));
+                    this.Settings.CustomModels,
+                    this.SelectedModel));
+                this.ModelRefreshStatus = "Modelos atualizados pelo Codex.";
+                this.OnPropertyChanged(nameof(this.SelectedModelLabel));
             });
         }
         catch (Exception ex)
         {
             RunOnUiThread(() =>
             {
-                if (ModelOptions.Count == 0)
+                if (this.ModelOptions.Count == 0)
                 {
-                    ReplaceModelOptions(MergeModelOptions(
+                    this.ReplaceModelOptions(MergeModelOptions(
                         Enumerable.Empty<SelectionOption>(),
                         CreateFallbackModelOptions(),
-                        Settings.CustomModels,
-                        SelectedModel));
+                        this.Settings.CustomModels,
+                        this.SelectedModel));
                 }
 
-                ModelRefreshStatus = "Falha ao atualizar modelos. Mantendo lista atual.";
+                this.ModelRefreshStatus = "Falha ao atualizar modelos. Mantendo lista atual.";
             });
-            AppendOutput(_localization.LoadModelsErrorPrefix + ex.Message + Environment.NewLine);
+            this.AppendOutput(this.Localization.LoadModelsErrorPrefix + ex.Message + Environment.NewLine);
         }
         finally
         {
-            RunOnUiThread(() => IsRefreshingModels = false);
+            RunOnUiThread(() => this.IsRefreshingModels = false);
         }
     }
 
@@ -2986,11 +2952,11 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         IEnumerable<string> customModels,
         string selectedModel)
     {
-        var result = new List<SelectionOption>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var fallbackList = NormalizeOptions(fallbackModels).ToList();
-        var fallbackValues = new HashSet<string>(fallbackList.Select(option => option.Value), StringComparer.OrdinalIgnoreCase);
-        var selected = NormalizeModelValue(selectedModel);
+        List<SelectionOption> result = [];
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        List<SelectionOption> fallbackList = NormalizeOptions(fallbackModels).ToList();
+        HashSet<string> fallbackValues = new(fallbackList.Select(option => option.Value), StringComparer.OrdinalIgnoreCase);
+        string selected = NormalizeModelValue(selectedModel);
 
         void AddOption(string? label, string? value)
         {
@@ -3009,14 +2975,14 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             result.Add(new SelectionOption(label, value));
         }
 
-        foreach (var option in NormalizeOptions(remoteModels))
+        foreach (SelectionOption option in NormalizeOptions(remoteModels))
         {
             AddOption(option.Label, option.Value);
         }
 
-        foreach (var model in customModels ?? Enumerable.Empty<string>())
+        foreach (string model in customModels ?? Enumerable.Empty<string>())
         {
-            var value = NormalizeModelValue(model);
+            string value = NormalizeModelValue(model);
             if (string.IsNullOrWhiteSpace(value) || fallbackValues.Contains(value))
             {
                 continue;
@@ -3030,14 +2996,14 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             AddOption(selected + " (custom)", selected);
         }
 
-        foreach (var option in fallbackList)
+        foreach (SelectionOption? option in fallbackList)
         {
             AddOption(option.Label, option.Value);
         }
 
         if (result.Count == 0)
         {
-            foreach (var option in CreateFallbackModelOptions())
+            foreach (SelectionOption option in CreateFallbackModelOptions())
             {
                 AddOption(option.Label, option.Value);
             }
@@ -3052,8 +3018,8 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             .Where(option => option is not null && !string.IsNullOrWhiteSpace(option.Value))
             .Select(option =>
             {
-                var value = NormalizeModelValue(option.Value);
-                var label = string.IsNullOrWhiteSpace(option.Label) ? value : option.Label.Trim();
+                string value = NormalizeModelValue(option.Value);
+                string label = string.IsNullOrWhiteSpace(option.Label) ? value : option.Label.Trim();
                 return new SelectionOption(label, value);
             })
             .Where(option => !string.IsNullOrWhiteSpace(option.Value))
@@ -3062,43 +3028,43 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private void ReplaceModelOptions(IEnumerable<SelectionOption> options)
     {
-        ModelOptions.Clear();
-        foreach (var option in options)
+        this.ModelOptions.Clear();
+        foreach (SelectionOption option in options)
         {
-            ModelOptions.Add(option);
+            this.ModelOptions.Add(option);
         }
 
-        EnsureSelectedModelOption(SelectedModel);
-        OnPropertyChanged(nameof(SelectedModelLabel));
+        this.EnsureSelectedModelOption(this.SelectedModel);
+        this.OnPropertyChanged(nameof(this.SelectedModelLabel));
     }
 
     private void EnsureSelectedModelOption(string? model)
     {
-        var value = NormalizeModelValue(model);
+        string value = NormalizeModelValue(model);
         if (string.IsNullOrWhiteSpace(value)
-            || ModelOptions.Any(option => string.Equals(option.Value, value, StringComparison.OrdinalIgnoreCase)))
+            || this.ModelOptions.Any(option => string.Equals(option.Value, value, StringComparison.OrdinalIgnoreCase)))
         {
             return;
         }
 
-        ModelOptions.Add(new SelectionOption(value + " (custom)", value));
+        this.ModelOptions.Add(new SelectionOption(value + " (custom)", value));
     }
 
     private void AddCustomModelToSettings(string model)
     {
         model = NormalizeModelValue(model);
         if (string.IsNullOrWhiteSpace(model)
-            || Settings.CustomModels.Any(item => string.Equals(item, model, StringComparison.OrdinalIgnoreCase)))
+            || this.Settings.CustomModels.Any(item => string.Equals(item, model, StringComparison.OrdinalIgnoreCase)))
         {
             return;
         }
 
-        Settings.CustomModels.Add(model);
+        this.Settings.CustomModels.Add(model);
     }
 
     private void PersistSelectedModelIfCustom()
     {
-        var selected = NormalizeModelValue(SelectedModel);
+        string selected = NormalizeModelValue(this.SelectedModel);
         if (string.IsNullOrWhiteSpace(selected))
         {
             return;
@@ -3109,106 +3075,106 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        var existingOption = ModelOptions.FirstOrDefault(option => string.Equals(option.Value, selected, StringComparison.OrdinalIgnoreCase));
+        SelectionOption? existingOption = this.ModelOptions.FirstOrDefault(option => string.Equals(option.Value, selected, StringComparison.OrdinalIgnoreCase));
         if (existingOption is not null && !existingOption.Label.EndsWith(" (custom)", StringComparison.Ordinal))
         {
             return;
         }
 
-        AddCustomModelToSettings(selected);
+        this.AddCustomModelToSettings(selected);
     }
 
     private async Task RefreshThreadsAsync(string? preferredThreadId = null)
     {
         try
         {
-            var threads = await _codexProcessService.ListThreadsAsync(Settings, CancellationToken.None).ConfigureAwait(false);
+            IReadOnlyList<CodexThreadSummary> threads = await this._codexProcessService.ListThreadsAsync(this.Settings, CancellationToken.None).ConfigureAwait(false);
             RunOnUiThread(() =>
             {
-                var selectedThreadId = preferredThreadId ?? SelectedThread?.ThreadId ?? Settings.CurrentThreadId;
-                var editingThreadId = EditingThreadId;
-                Threads.Clear();
-                foreach (var thread in threads)
+                string selectedThreadId = preferredThreadId ?? this.SelectedThread?.ThreadId ?? this.Settings.CurrentThreadId;
+                string editingThreadId = this.EditingThreadId;
+                this.Threads.Clear();
+                foreach (CodexThreadSummary thread in threads)
                 {
-                    Threads.Add(thread);
+                    this.Threads.Add(thread);
                 }
 
-                _suppressThreadSelection = true;
-                SelectedThread = Threads.FirstOrDefault(thread => string.Equals(thread.ThreadId, selectedThreadId, StringComparison.Ordinal));
-                _suppressThreadSelection = false;
+                this._suppressThreadSelection = true;
+                this.SelectedThread = this.Threads.FirstOrDefault(thread => string.Equals(thread.ThreadId, selectedThreadId, StringComparison.Ordinal));
+                this._suppressThreadSelection = false;
 
                 if (!string.IsNullOrWhiteSpace(editingThreadId)
-                    && !Threads.Any(thread => string.Equals(thread.ThreadId, editingThreadId, StringComparison.Ordinal)))
+                    && !this.Threads.Any(thread => string.Equals(thread.ThreadId, editingThreadId, StringComparison.Ordinal)))
                 {
-                    EditingThreadId = string.Empty;
-                    RenameThreadName = SelectedThread?.Title ?? string.Empty;
+                    this.EditingThreadId = string.Empty;
+                    this.RenameThreadName = this.SelectedThread?.Title ?? string.Empty;
                 }
             });
         }
         catch (Exception ex)
         {
-            AppendOutput(_localization.LoadTopicsErrorPrefix + ex.Message + Environment.NewLine);
+            this.AppendOutput(this.Localization.LoadTopicsErrorPrefix + ex.Message + Environment.NewLine);
         }
     }
 
     private async Task RefreshServerSurfacesAsync(bool forceSkillReload = false)
     {
-        if (!IsCodexReady)
+        if (!this.IsCodexReady)
         {
-            ClearServerSurfaces();
+            this.ClearServerSurfaces();
             return;
         }
 
         try
         {
-            var appsTask = _codexProcessService.ListAppsAsync(Settings, CancellationToken.None);
-            var mcpTask = _codexProcessService.ListMcpServersAsync(Settings, CancellationToken.None);
-            var skillsTask = _codexProcessService.ListSkillsAsync(Settings, CancellationToken.None, forceSkillReload);
-            var remoteSkillsTask = GetRemoteSkillsSafeAsync();
-            var rateLimitsTask = GetRateLimitsSafeAsync();
+            Task<IReadOnlyList<CodexAppSummary>> appsTask = this._codexProcessService.ListAppsAsync(this.Settings, CancellationToken.None);
+            Task<IReadOnlyList<CodexMcpServerSummary>> mcpTask = this._codexProcessService.ListMcpServersAsync(this.Settings, CancellationToken.None);
+            Task<IReadOnlyList<CodexSkillSummary>> skillsTask = this._codexProcessService.ListSkillsAsync(this.Settings, CancellationToken.None, forceSkillReload);
+            Task<IReadOnlyList<CodexRemoteSkillSummary>> remoteSkillsTask = this.GetRemoteSkillsSafeAsync();
+            Task<CodexRateLimitSummary> rateLimitsTask = this.GetRateLimitsSafeAsync();
             await Task.WhenAll(appsTask, mcpTask, skillsTask, remoteSkillsTask, rateLimitsTask).ConfigureAwait(false);
 
             RunOnUiThread(() =>
             {
-                Apps.Clear();
-                foreach (var app in appsTask.Result)
+                this.Apps.Clear();
+                foreach (CodexAppSummary app in appsTask.Result)
                 {
-                    Apps.Add(app);
+                    this.Apps.Add(app);
                 }
 
-                McpServers.Clear();
-                foreach (var server in mcpTask.Result)
+                this.McpServers.Clear();
+                foreach (CodexMcpServerSummary server in mcpTask.Result)
                 {
-                    McpServers.Add(server);
+                    this.McpServers.Add(server);
                 }
-                SyncMcpShortcutSelections();
+                this.SyncMcpShortcutSelections();
 
-                Skills.Clear();
-                foreach (var skill in skillsTask.Result)
+                this.Skills.Clear();
+                foreach (CodexSkillSummary skill in skillsTask.Result)
                 {
-                    Skills.Add(skill);
+                    this.Skills.Add(skill);
                 }
 
-                RemoteSkills.Clear();
-                foreach (var skill in remoteSkillsTask.Result)
+                this.RemoteSkills.Clear();
+                foreach (CodexRemoteSkillSummary skill in remoteSkillsTask.Result)
                 {
-                    if (Skills.Any(installed => string.Equals(installed.Name, skill.Name, StringComparison.OrdinalIgnoreCase)))
+                    if (this.Skills.Any(installed => string.Equals(installed.Name, skill.Name, StringComparison.OrdinalIgnoreCase)))
                     {
                         continue;
                     }
 
-                    RemoteSkills.Add(skill);
+                    this.RemoteSkills.Add(skill);
                 }
 
-                RateLimitSummary = rateLimitsTask.Result;
-                OnPropertyChanged(nameof(VisibleSkills));
-                OnPropertyChanged(nameof(VisibleRemoteSkills));
-                OnPropertyChanged(nameof(HasRemoteSkills));
+                this.RateLimitSummary = rateLimitsTask.Result;
+                this.OnPropertyChanged(nameof(this.VisibleSkills));
+                this.OnPropertyChanged(nameof(this.VisibleRemoteSkills));
+                this.OnPropertyChanged(nameof(this.HasRemoteSkills));
             });
         }
         catch (Exception ex)
         {
-            AppendOutput("[" + _localization.OutputTagServer + "] " + ex.Message + Environment.NewLine);
+            this.AppendOutput("[" + this.Localization.OutputTagServer + "] " + ex.Message + Environment.NewLine);
         }
     }
 
@@ -3216,7 +3182,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         try
         {
-            return await _codexProcessService.ListRemoteSkillsAsync(Settings, CancellationToken.None).ConfigureAwait(false);
+            return await this._codexProcessService.ListRemoteSkillsAsync(this.Settings, CancellationToken.None).ConfigureAwait(false);
         }
         catch
         {
@@ -3228,7 +3194,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         try
         {
-            return await _codexProcessService.GetAccountRateLimitsAsync(Settings, CancellationToken.None).ConfigureAwait(false);
+            return await this._codexProcessService.GetAccountRateLimitsAsync(this.Settings, CancellationToken.None).ConfigureAwait(false);
         }
         catch
         {
@@ -3238,106 +3204,106 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private async Task OpenThreadAsync(string threadId)
     {
-        if (IsBusy || string.IsNullOrWhiteSpace(threadId))
+        if (this.IsBusy || string.IsNullOrWhiteSpace(threadId))
         {
             return;
         }
 
-        var conversationStateVersion = BeginConversationStateChange();
+        long conversationStateVersion = this.BeginConversationStateChange();
 
         try
         {
-            var conversation = await _codexProcessService.LoadThreadConversationAsync(Settings, threadId, CancellationToken.None).ConfigureAwait(false);
-            if (conversation is null || !IsConversationStateCurrent(conversationStateVersion))
+            CodexThreadConversation? conversation = await this._codexProcessService.LoadThreadConversationAsync(this.Settings, threadId, CancellationToken.None).ConfigureAwait(false);
+            if (conversation is null || !this.IsConversationStateCurrent(conversationStateVersion))
             {
                 return;
             }
 
-            Settings.CurrentThreadId = conversation.Thread.ThreadId;
-            Settings.LastThreadWorkingDirectory = Settings.WorkingDirectory;
-            SaveSettings();
+            this.Settings.CurrentThreadId = conversation.Thread.ThreadId;
+            this.Settings.LastThreadWorkingDirectory = this.Settings.WorkingDirectory;
+            this.SaveSettings();
 
             RunOnUiThread(() =>
             {
-                _currentAssistantMessage = null;
-                _currentPlanMessage = null;
-                Messages.ReplaceAll(conversation.Messages.Select(CreateDisplayMessage));
+                this._currentAssistantMessage = null;
+                this._currentPlanMessage = null;
+                this.Messages.ReplaceAll(conversation.Messages.Select(this.CreateDisplayMessage));
 
-                Output = string.Empty;
-                CloseSidebar();
+                this.Output = string.Empty;
+                this.CloseSidebar();
             });
 
-            await RefreshThreadsAsync(conversation.Thread.ThreadId).ConfigureAwait(false);
+            await this.RefreshThreadsAsync(conversation.Thread.ThreadId).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            if (IsConversationStateCurrent(conversationStateVersion))
+            if (this.IsConversationStateCurrent(conversationStateVersion))
             {
-                AppendOutput(_localization.LoadTopicsErrorPrefix + ex.Message + Environment.NewLine);
+                this.AppendOutput(this.Localization.LoadTopicsErrorPrefix + ex.Message + Environment.NewLine);
             }
         }
     }
 
     private void StartNewThread()
     {
-        if (IsStopping)
+        if (this.IsStopping)
         {
             return;
         }
 
-        if (IsBusy)
+        if (this.IsBusy)
         {
-            Cancel();
+            this.Cancel();
         }
 
-        BeginConversationStateChange();
-        _hideRecentTasksPreview = true;
-        _pinRecentTasksPreview = false;
-        _showExpandedRecentTasksPreview = false;
-        OnPropertyChanged(nameof(ShowRecentTasksPreview));
-        OnPropertyChanged(nameof(RecentThreadsPreview));
-        OnPropertyChanged(nameof(HasMoreThreadsThanPreview));
-        OnPropertyChanged(nameof(IsRecentTasksPreviewExpanded));
-        _approvalDecisionTcs?.TrySetResult(JValue.CreateString("cancel"));
-        _approvalDecisionTcs = null;
-        CurrentApprovalPrompt = null;
-        _currentAssistantMessage = null;
-        _currentPlanMessage = null;
-        Settings.CurrentThreadId = string.Empty;
-        Settings.LastThreadWorkingDirectory = Settings.WorkingDirectory;
-        _codexProcessService.ResetThread();
-        SaveSettings();
+        _ = this.BeginConversationStateChange();
+        this._hideRecentTasksPreview = true;
+        this._pinRecentTasksPreview = false;
+        this.IsRecentTasksPreviewExpanded = false;
+        this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
+        this.OnPropertyChanged(nameof(this.RecentThreadsPreview));
+        this.OnPropertyChanged(nameof(this.HasMoreThreadsThanPreview));
+        this.OnPropertyChanged(nameof(this.IsRecentTasksPreviewExpanded));
+        _ = (this._approvalDecisionTcs?.TrySetResult(JValue.CreateString("cancel")));
+        this._approvalDecisionTcs = null;
+        this.CurrentApprovalPrompt = null;
+        this._currentAssistantMessage = null;
+        this._currentPlanMessage = null;
+        this.Settings.CurrentThreadId = string.Empty;
+        this.Settings.LastThreadWorkingDirectory = this.Settings.WorkingDirectory;
+        this._codexProcessService.ResetThread();
+        this.SaveSettings();
 
         RunOnUiThread(() =>
         {
-            _suppressThreadSelection = true;
-            SelectedThread = null;
-            _suppressThreadSelection = false;
-            RenameThreadName = string.Empty;
-            Messages.Clear();
-            Output = string.Empty;
-            UpdateContextEstimate();
-            CloseSidebar();
+            this._suppressThreadSelection = true;
+            this.SelectedThread = null;
+            this._suppressThreadSelection = false;
+            this.RenameThreadName = string.Empty;
+            this.Messages.Clear();
+            this.Output = string.Empty;
+            this.UpdateContextEstimate();
+            this.CloseSidebar();
         });
 
-        ThreadHelper.JoinableTaskFactory.RunAsync(() => RefreshThreadsAsync(null));
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(() => this.RefreshThreadsAsync(null));
     }
 
     private void DismissRecentTasksPreview()
     {
-        if (_hideRecentTasksPreview)
+        if (this._hideRecentTasksPreview)
         {
             return;
         }
 
-        _hideRecentTasksPreview = true;
-        _pinRecentTasksPreview = false;
-        _showExpandedRecentTasksPreview = false;
-        OnPropertyChanged(nameof(ShowRecentTasksPreview));
-        OnPropertyChanged(nameof(RecentThreadsPreview));
-        OnPropertyChanged(nameof(HasMoreThreadsThanPreview));
-        OnPropertyChanged(nameof(IsRecentTasksPreviewExpanded));
-        OnPropertyChanged(nameof(IsHistoryViewSelected));
+        this._hideRecentTasksPreview = true;
+        this._pinRecentTasksPreview = false;
+        this.IsRecentTasksPreviewExpanded = false;
+        this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
+        this.OnPropertyChanged(nameof(this.RecentThreadsPreview));
+        this.OnPropertyChanged(nameof(this.HasMoreThreadsThanPreview));
+        this.OnPropertyChanged(nameof(this.IsRecentTasksPreviewExpanded));
+        this.OnPropertyChanged(nameof(this.IsHistoryViewSelected));
     }
 
     private void BeginRenameThread(object? parameter)
@@ -3347,48 +3313,48 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        EditingThreadId = thread.ThreadId;
-        RenameThreadName = thread.Title;
+        this.EditingThreadId = thread.ThreadId;
+        this.RenameThreadName = thread.Title;
     }
 
     private bool CanRenameThread(object? parameter)
     {
-        return !IsBusy
-            && !string.IsNullOrWhiteSpace(RenameThreadName)
-            && ResolveThreadForRename(parameter) is not null;
+        return !this.IsBusy
+            && !string.IsNullOrWhiteSpace(this.RenameThreadName)
+            && this.ResolveThreadForRename(parameter) is not null;
     }
 
     private void RenameSelectedThread(object? parameter)
     {
-        var selectedThread = ResolveThreadForRename(parameter);
-        var newName = RenameThreadName?.Trim();
+        CodexThreadSummary? selectedThread = this.ResolveThreadForRename(parameter);
+        string? newName = this.RenameThreadName?.Trim();
         if (selectedThread is null || string.IsNullOrWhiteSpace(newName))
         {
             return;
         }
 
-        ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
         {
             try
             {
-                await _codexProcessService.RenameThreadAsync(Settings, selectedThread.ThreadId, newName!, CancellationToken.None).ConfigureAwait(false);
-                await RefreshThreadsAsync(selectedThread.ThreadId).ConfigureAwait(false);
+                await this._codexProcessService.RenameThreadAsync(this.Settings, selectedThread.ThreadId, newName!, CancellationToken.None).ConfigureAwait(false);
+                await this.RefreshThreadsAsync(selectedThread.ThreadId).ConfigureAwait(false);
                 RunOnUiThread(() =>
                 {
-                    EditingThreadId = string.Empty;
-                    RenameThreadName = SelectedThread?.Title ?? string.Empty;
+                    this.EditingThreadId = string.Empty;
+                    this.RenameThreadName = this.SelectedThread?.Title ?? string.Empty;
                 });
             }
             catch (Exception ex)
             {
-                AppendOutput(_localization.LoadTopicsErrorPrefix + ex.Message + Environment.NewLine);
+                this.AppendOutput(this.Localization.LoadTopicsErrorPrefix + ex.Message + Environment.NewLine);
             }
         });
     }
 
     private void CancelRenameThread(object? parameter)
     {
-        var editingThreadId = EditingThreadId;
+        string editingThreadId = this.EditingThreadId;
         if (string.IsNullOrWhiteSpace(editingThreadId))
         {
             return;
@@ -3400,8 +3366,8 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        EditingThreadId = string.Empty;
-        RenameThreadName = SelectedThread?.Title ?? string.Empty;
+        this.EditingThreadId = string.Empty;
+        this.RenameThreadName = this.SelectedThread?.Title ?? string.Empty;
     }
 
     private CodexThreadSummary? ResolveThreadForRename(object? parameter)
@@ -3411,59 +3377,59 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return thread;
         }
 
-        if (!string.IsNullOrWhiteSpace(EditingThreadId))
+        if (!string.IsNullOrWhiteSpace(this.EditingThreadId))
         {
-            return Threads.FirstOrDefault(threadSummary => string.Equals(threadSummary.ThreadId, EditingThreadId, StringComparison.Ordinal));
+            return this.Threads.FirstOrDefault(threadSummary => string.Equals(threadSummary.ThreadId, this.EditingThreadId, StringComparison.Ordinal));
         }
 
-        return SelectedThread;
+        return this.SelectedThread;
     }
 
     private void DeleteThread(object? parameter)
     {
-        if (IsBusy || parameter is not CodexThreadSummary thread)
+        if (this.IsBusy || parameter is not CodexThreadSummary thread)
         {
             return;
         }
 
-        ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
         {
             try
             {
-                await _codexProcessService.ArchiveThreadAsync(Settings, thread.ThreadId, CancellationToken.None).ConfigureAwait(false);
+                await this._codexProcessService.ArchiveThreadAsync(this.Settings, thread.ThreadId, CancellationToken.None).ConfigureAwait(false);
 
-                if (string.Equals(Settings.CurrentThreadId, thread.ThreadId, StringComparison.Ordinal))
+                if (string.Equals(this.Settings.CurrentThreadId, thread.ThreadId, StringComparison.Ordinal))
                 {
-                    BeginConversationStateChange();
-                    Settings.CurrentThreadId = string.Empty;
-                    Settings.LastThreadWorkingDirectory = Settings.WorkingDirectory;
-                    _codexProcessService.ResetThread();
-                    SaveSettings();
+                    _ = this.BeginConversationStateChange();
+                    this.Settings.CurrentThreadId = string.Empty;
+                    this.Settings.LastThreadWorkingDirectory = this.Settings.WorkingDirectory;
+                    this._codexProcessService.ResetThread();
+                    this.SaveSettings();
 
                     RunOnUiThread(() =>
                     {
-                        _suppressThreadSelection = true;
-                        SelectedThread = null;
-                        _suppressThreadSelection = false;
-                        EditingThreadId = string.Empty;
-                        RenameThreadName = string.Empty;
-                        Messages.Clear();
-                        Output = string.Empty;
+                        this._suppressThreadSelection = true;
+                        this.SelectedThread = null;
+                        this._suppressThreadSelection = false;
+                        this.EditingThreadId = string.Empty;
+                        this.RenameThreadName = string.Empty;
+                        this.Messages.Clear();
+                        this.Output = string.Empty;
                     });
                 }
 
-                await RefreshThreadsAsync(Settings.CurrentThreadId).ConfigureAwait(false);
+                await this.RefreshThreadsAsync(this.Settings.CurrentThreadId).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                AppendOutput(_localization.LoadTopicsErrorPrefix + ex.Message + Environment.NewLine);
+                this.AppendOutput(this.Localization.LoadTopicsErrorPrefix + ex.Message + Environment.NewLine);
             }
         });
     }
 
     private void HandleThreadCatalogChanged()
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(() => RefreshThreadsAsync(Settings.CurrentThreadId));
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(() => this.RefreshThreadsAsync(this.Settings.CurrentThreadId));
     }
 
     private static IEnumerable<SelectionOption> CreateFallbackModelOptions()
@@ -3479,77 +3445,81 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private void RefreshMentions()
     {
-        var mention = ExtractCurrentMention(PromptEditorText);
-        CurrentMentionQuery = mention;
-        MentionSuggestions.Clear();
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        string mention = ExtractCurrentMention(this.PromptEditorText);
+        this.CurrentMentionQuery = mention;
+        this.MentionSuggestions.Clear();
 
         if (string.IsNullOrWhiteSpace(mention))
         {
-            OnPropertyChanged(nameof(HasMentionSuggestions));
+            this.OnPropertyChanged(nameof(this.HasMentionSuggestions));
             return;
         }
 
-        ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            foreach (var file in _solutionContextService.FindSolutionFiles(mention))
+            foreach (string file in this._solutionContextService.FindSolutionFiles(mention))
             {
-                MentionSuggestions.Add(file);
+                this.MentionSuggestions.Add(file);
             }
 
-            OnPropertyChanged(nameof(HasMentionSuggestions));
+            this.OnPropertyChanged(nameof(this.HasMentionSuggestions));
         });
     }
 
     private void RefreshDetectedPromptSkills()
     {
-        ApplyRawPrompt(_prompt);
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        this.ApplyRawPrompt(this._prompt);
     }
 
     private void InsertSelectedMention()
     {
-        if (string.IsNullOrWhiteSpace(SelectedMention))
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        if (string.IsNullOrWhiteSpace(this.SelectedMention))
         {
             return;
         }
 
-        var mention = ExtractCurrentMention(PromptEditorText);
+        string mention = ExtractCurrentMention(this.PromptEditorText);
         if (string.IsNullOrWhiteSpace(mention))
         {
             return;
         }
 
-        var suffix = "@" + mention;
-        var idx = PromptEditorText.LastIndexOf(suffix, StringComparison.OrdinalIgnoreCase);
+        string suffix = "@" + mention;
+        int idx = this.PromptEditorText.LastIndexOf(suffix, StringComparison.OrdinalIgnoreCase);
         if (idx < 0)
         {
             return;
         }
 
-        PromptEditorText = PromptEditorText.Substring(0, idx) + "@" + SelectedMention + " " + PromptEditorText.Substring(idx + suffix.Length);
-        MentionSuggestions.Clear();
-        CurrentMentionQuery = string.Empty;
+        this.PromptEditorText = this.PromptEditorText.Substring(0, idx) + "@" + this.SelectedMention + " " + this.PromptEditorText.Substring(idx + suffix.Length);
+        this.MentionSuggestions.Clear();
+        this.CurrentMentionQuery = string.Empty;
     }
 
     private void ReuseHistoryPrompt()
     {
-        var selectedHistoryPrompt = SelectedHistoryPrompt;
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        string? selectedHistoryPrompt = this.SelectedHistoryPrompt;
         if (!string.IsNullOrWhiteSpace(selectedHistoryPrompt))
         {
-            Prompt = selectedHistoryPrompt!;
-            ShowHistoryPanel = false;
+            this.Prompt = selectedHistoryPrompt!;
+            this.ShowHistoryPanel = false;
         }
     }
 
     private async Task<JToken?> HandleApprovalRequestAsync(CodexApprovalRequest request)
     {
-        var prompt = BuildApprovalPrompt(request);
-        var decisionTcs = new TaskCompletionSource<JToken?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ApprovalPromptViewModel prompt = this.BuildApprovalPrompt(request);
+        TaskCompletionSource<JToken?> decisionTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         RunOnUiThread(() =>
         {
-            _approvalDecisionTcs = decisionTcs;
-            CurrentApprovalPrompt = prompt;
+            this._approvalDecisionTcs = decisionTcs;
+            this.CurrentApprovalPrompt = prompt;
         });
 
         return await decisionTcs.Task.ConfigureAwait(false);
@@ -3557,13 +3527,13 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private async Task<JObject?> HandleUserInputRequestAsync(CodexUserInputRequest request)
     {
-        var prompt = BuildUserInputPrompt(request);
-        var decisionTcs = new TaskCompletionSource<JObject?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        UserInputPromptViewModel prompt = this.BuildUserInputPrompt(request);
+        TaskCompletionSource<JObject?> decisionTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         RunOnUiThread(() =>
         {
-            _userInputDecisionTcs = decisionTcs;
-            CurrentUserInputPrompt = prompt;
+            this._userInputDecisionTcs = decisionTcs;
+            this.CurrentUserInputPrompt = prompt;
         });
 
         return await decisionTcs.Task.ConfigureAwait(false);
@@ -3571,11 +3541,11 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private ApprovalPromptViewModel BuildApprovalPrompt(CodexApprovalRequest request)
     {
-        var prompt = new ApprovalPromptViewModel
+        ApprovalPromptViewModel prompt = new()
         {
             Title = string.Equals(request.Method, "item/fileChange/requestApproval", StringComparison.Ordinal)
-                ? _localization.ApprovalFileChangeTitle
-                : _localization.ApprovalCommandTitle,
+                ? this.Localization.ApprovalFileChangeTitle
+                : this.Localization.ApprovalCommandTitle,
             Subtitle = request.ProposedExecpolicyLabel,
             Command = request.Command,
             WorkingDirectory = request.WorkingDirectory,
@@ -3583,12 +3553,12 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             GrantRoot = request.GrantRoot
         };
 
-        foreach (var option in request.Options)
+        foreach (CodexApprovalOption option in request.Options)
         {
-            var isDanger = string.Equals(option.Key, "decline", StringComparison.Ordinal) || string.Equals(option.Key, "cancel", StringComparison.Ordinal);
-            var isPrimary = string.Equals(option.Key, "accept", StringComparison.Ordinal) || string.Equals(option.Key, "acceptForSession", StringComparison.Ordinal);
+            bool isDanger = string.Equals(option.Key, "decline", StringComparison.Ordinal) || string.Equals(option.Key, "cancel", StringComparison.Ordinal);
+            bool isPrimary = string.Equals(option.Key, "accept", StringComparison.Ordinal) || string.Equals(option.Key, "acceptForSession", StringComparison.Ordinal);
             prompt.Options.Add(new ApprovalOptionViewModel(
-                _localization.GetApprovalOptionLabel(option.Key),
+                this.Localization.GetApprovalOptionLabel(option.Key),
                 option.Decision.DeepClone(),
                 isPrimary,
                 isDanger));
@@ -3596,7 +3566,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
         if (prompt.Options.Count == 0)
         {
-            prompt.Options.Add(new ApprovalOptionViewModel(_localization.ApprovalDecline, JValue.CreateString("decline"), isDanger: true));
+            prompt.Options.Add(new ApprovalOptionViewModel(this.Localization.ApprovalDecline, JValue.CreateString("decline"), isDanger: true));
         }
 
         return prompt;
@@ -3609,22 +3579,22 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        var tcs = _approvalDecisionTcs;
-        CurrentApprovalPrompt = null;
-        _approvalDecisionTcs = null;
-        tcs?.TrySetResult(option.Decision.DeepClone());
+        TaskCompletionSource<JToken?>? tcs = this._approvalDecisionTcs;
+        this.CurrentApprovalPrompt = null;
+        this._approvalDecisionTcs = null;
+        _ = (tcs?.TrySetResult(option.Decision.DeepClone()));
     }
 
     private UserInputPromptViewModel BuildUserInputPrompt(CodexUserInputRequest request)
     {
-        var prompt = new UserInputPromptViewModel
+        UserInputPromptViewModel prompt = new()
         {
-            Title = _localization.UserInputTitle
+            Title = this.Localization.UserInputTitle
         };
 
-        foreach (var question in request.Questions)
+        foreach (CodexUserInputQuestion question in request.Questions)
         {
-            var item = new UserInputQuestionViewModel
+            UserInputQuestionViewModel item = new()
             {
                 Header = question.Header,
                 Id = question.Id,
@@ -3633,7 +3603,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
                 AcceptsText = question.IsOther || question.Options.Count == 0
             };
 
-            foreach (var option in question.Options)
+            foreach (CodexUserInputOption option in question.Options)
             {
                 item.Options.Add(new SelectionOption(option.Label, option.Label));
             }
@@ -3651,62 +3621,66 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private void HandleManagedMcpServersChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        OnPropertyChanged(nameof(HasManagedMcpServers));
+        this.OnPropertyChanged(nameof(this.HasManagedMcpServers));
     }
 
     private void HandleRateLimitsUpdated(CodexRateLimitSummary summary)
     {
-        RunOnUiThread(() => RateLimitSummary = summary);
+        RunOnUiThread(() => this.RateLimitSummary = summary);
     }
 
     private void HandleAccountUpdated()
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async delegate
         {
-            if (!IsCodexReady)
+            if (!this.IsCodexReady)
             {
                 return;
             }
 
-            await RefreshServerSurfacesAsync(forceSkillReload: false).ConfigureAwait(false);
+            await this.RefreshServerSurfacesAsync(forceSkillReload: false).ConfigureAwait(false);
         });
     }
 
     private void HandleThreadsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        OnPropertyChanged(nameof(HasThreads));
-        OnPropertyChanged(nameof(VisibleThreads));
-        OnPropertyChanged(nameof(HasVisibleThreads));
-        OnPropertyChanged(nameof(RecentThreadsPreview));
-        OnPropertyChanged(nameof(HasMoreThreadsThanPreview));
-        OnPropertyChanged(nameof(ShowRecentTasksPreview));
+        this.OnPropertyChanged(nameof(this.HasThreads));
+        this.OnPropertyChanged(nameof(this.VisibleThreads));
+        this.OnPropertyChanged(nameof(this.HasVisibleThreads));
+        this.OnPropertyChanged(nameof(this.RecentThreadsPreview));
+        this.OnPropertyChanged(nameof(this.HasMoreThreadsThanPreview));
+        this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
     }
 
     private void HandleMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        OnPropertyChanged(nameof(ShowRecentTasksPreview));
+        this.OnPropertyChanged(nameof(this.ShowRecentTasksPreview));
     }
 
     private void HandleMcpServersChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        SyncMcpShortcutSelections();
-        OnPropertyChanged(nameof(HasDetectedMcpServers));
-        OnPropertyChanged(nameof(HasPreferredMcpServers));
-        OnPropertyChanged(nameof(PreferredMcpServers));
+        this.SyncMcpShortcutSelections();
+        this.OnPropertyChanged(nameof(this.HasDetectedMcpServers));
+        this.OnPropertyChanged(nameof(this.HasPreferredMcpServers));
+        this.OnPropertyChanged(nameof(this.PreferredMcpServers));
     }
 
     private void HandleSkillsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        OnPropertyChanged(nameof(HasSkills));
-        RefreshDetectedPromptSkills();
-        RefreshDisplayedUserMessages();
-        OnPropertyChanged(nameof(VisibleSkills));
+        RunOnUiThread(() =>
+        {
+            Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+            this.OnPropertyChanged(nameof(this.HasSkills));
+            this.RefreshDetectedPromptSkills();
+            this.RefreshDisplayedUserMessages();
+            this.OnPropertyChanged(nameof(this.VisibleSkills));
+        });
     }
 
     private void SyncMcpShortcutSelections()
     {
-        var selectedServers = new HashSet<string>(Settings.PreferredMcpServers ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
-        foreach (var server in McpServers)
+        HashSet<string> selectedServers = new(this.Settings.PreferredMcpServers ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        foreach (CodexMcpServerSummary server in this.McpServers)
         {
             server.IsShortcutSelected = selectedServers.Contains(server.Name);
         }
@@ -3732,14 +3706,14 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private ChatMessage CreateDisplayMessage(bool isUser, string text, bool isEvent = false, string? title = null, string? detail = null, bool? supportsMarkdownText = null, bool supportsMarkdownDetail = false)
     {
-        var message = new ChatMessage(isUser, text, isEvent, title, detail, supportsMarkdownText, supportsMarkdownDetail);
-        DecorateUserMessageDisplay(message);
+        ChatMessage message = new(isUser, text, isEvent, title, detail, supportsMarkdownText, supportsMarkdownDetail);
+        this.DecorateUserMessageDisplay(message);
         return message;
     }
 
     private ChatMessage CreateDisplayMessage(ChatMessage source)
     {
-        var message = CreateDisplayMessage(
+        ChatMessage message = this.CreateDisplayMessage(
             source.IsUser,
             source.Text,
             source.IsEvent,
@@ -3755,9 +3729,9 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         RunOnUiThread(() =>
         {
-            foreach (var message in Messages)
+            foreach (ChatMessage message in this.Messages)
             {
-                DecorateUserMessageDisplay(message);
+                this.DecorateUserMessageDisplay(message);
             }
         });
     }
@@ -3770,28 +3744,28 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        var availableSkillNames = new HashSet<string>(
-            Skills.Where(skill => skill.IsEnabled && !string.IsNullOrWhiteSpace(skill.Name))
+        HashSet<string> availableSkillNames = new(
+            this.Skills.Where(skill => skill.IsEnabled && !string.IsNullOrWhiteSpace(skill.Name))
                 .Select(skill => skill.Name!),
             StringComparer.OrdinalIgnoreCase);
 
-        var formattedPrompt = FormatPromptSkillDisplay(message.Text, availableSkillNames);
+        (IReadOnlyList<string> SkillNames, string DisplayText) formattedPrompt = FormatPromptSkillDisplay(message.Text, availableSkillNames);
         message.ApplyPromptSkillDisplay(formattedPrompt.SkillNames, formattedPrompt.DisplayText);
     }
 
     private void ResolveUserInput()
     {
-        var prompt = CurrentUserInputPrompt;
-        var tcs = _userInputDecisionTcs;
+        UserInputPromptViewModel? prompt = this.CurrentUserInputPrompt;
+        TaskCompletionSource<JObject?>? tcs = this._userInputDecisionTcs;
         if (prompt is null)
         {
             return;
         }
 
-        var answers = new JObject();
-        foreach (var question in prompt.Questions)
+        JObject answers = [];
+        foreach (UserInputQuestionViewModel question in prompt.Questions)
         {
-            var answer = question.ResolvedAnswer;
+            string? answer = question.ResolvedAnswer;
             if (string.IsNullOrWhiteSpace(answer))
             {
                 continue;
@@ -3803,23 +3777,23 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             };
         }
 
-        CurrentUserInputPrompt = null;
-        _userInputDecisionTcs = null;
-        tcs?.TrySetResult(new JObject
+        this.CurrentUserInputPrompt = null;
+        this._userInputDecisionTcs = null;
+        _ = (tcs?.TrySetResult(new JObject
         {
             ["answers"] = answers
-        });
+        }));
     }
 
     internal void DismissUserInputPrompt()
     {
-        var tcs = _userInputDecisionTcs;
-        CurrentUserInputPrompt = null;
-        _userInputDecisionTcs = null;
-        tcs?.TrySetResult(new JObject
+        TaskCompletionSource<JObject?>? tcs = this._userInputDecisionTcs;
+        this.CurrentUserInputPrompt = null;
+        this._userInputDecisionTcs = null;
+        _ = (tcs?.TrySetResult(new JObject
         {
             ["answers"] = new JObject()
-        });
+        }));
     }
 
     private void AddPromptToHistory(string prompt)
@@ -3829,24 +3803,24 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        Settings.PromptHistory.RemoveAll(p => string.Equals(p, prompt, StringComparison.Ordinal));
-        Settings.PromptHistory.Add(prompt);
-        while (Settings.PromptHistory.Count > 50)
+        _ = this.Settings.PromptHistory.RemoveAll(p => string.Equals(p, prompt, StringComparison.Ordinal));
+        this.Settings.PromptHistory.Add(prompt);
+        while (this.Settings.PromptHistory.Count > 50)
         {
-            Settings.PromptHistory.RemoveAt(0);
+            this.Settings.PromptHistory.RemoveAt(0);
         }
 
-        PromptHistory.Clear();
-        foreach (var item in GetRecentPromptHistory())
+        this.PromptHistory.Clear();
+        foreach (string item in this.GetRecentPromptHistory())
         {
-            PromptHistory.Add(item);
+            this.PromptHistory.Add(item);
         }
     }
 
     private System.Collections.Generic.IEnumerable<string> GetRecentPromptHistory()
     {
-        var promptHistory = Settings.PromptHistory ?? new List<string>();
-        var skip = Math.Max(0, promptHistory.Count - 30);
+        List<string> promptHistory = this.Settings.PromptHistory ?? [];
+        int skip = Math.Max(0, promptHistory.Count - 30);
         return promptHistory.Skip(skip).Reverse();
     }
 
@@ -3854,7 +3828,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            Messages.Add(CreateDisplayMessage(true, text));
+            this.Messages.Add(this.CreateDisplayMessage(true, text));
         });
     }
 
@@ -3862,7 +3836,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            Messages.Add(CreateDisplayMessage(false, text));
+            this.Messages.Add(this.CreateDisplayMessage(false, text));
         });
     }
 
@@ -3870,58 +3844,58 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            if (IsPlanEvent(message))
+            if (this.IsPlanEvent(message))
             {
-                if (_currentPlanMessage is null || !Messages.Contains(_currentPlanMessage))
+                if (this._currentPlanMessage is null || !this.Messages.Contains(this._currentPlanMessage))
                 {
-                    _currentPlanMessage = CreateDisplayMessage(message);
-                    Messages.Add(_currentPlanMessage);
+                    this._currentPlanMessage = this.CreateDisplayMessage(message);
+                    this.Messages.Add(this._currentPlanMessage);
                 }
                 else
                 {
-                    _currentPlanMessage.Title = message.Title;
-                    _currentPlanMessage.Text = message.Text;
-                    _currentPlanMessage.Detail = message.Detail;
+                    this._currentPlanMessage.Title = message.Title;
+                    this._currentPlanMessage.Text = message.Text;
+                    this._currentPlanMessage.Detail = message.Detail;
                 }
 
                 return;
             }
 
-            if (_currentTransientStatusMessage is null)
+            if (this._currentTransientStatusMessage is null)
             {
-                _currentTransientStatusMessage = CreateDisplayMessage(message);
-                Messages.Add(_currentTransientStatusMessage);
+                this._currentTransientStatusMessage = this.CreateDisplayMessage(message);
+                this.Messages.Add(this._currentTransientStatusMessage);
             }
             else
             {
-                _currentTransientStatusMessage.Title = message.Title;
-                _currentTransientStatusMessage.Text = message.Text;
-                _currentTransientStatusMessage.Detail = message.Detail;
+                this._currentTransientStatusMessage.Title = message.Title;
+                this._currentTransientStatusMessage.Text = message.Text;
+                this._currentTransientStatusMessage.Detail = message.Detail;
             }
         });
     }
 
     private void AppendAssistantOutput(string text, long conversationStateVersion)
     {
-        var chunk = text.Replace("\r", string.Empty);
+        string chunk = text.Replace("\r", string.Empty);
         if (string.IsNullOrEmpty(chunk))
         {
             return;
         }
 
-        var shouldScheduleFlush = false;
-        lock (_assistantOutputSync)
+        bool shouldScheduleFlush = false;
+        lock (this._assistantOutputSync)
         {
-            if (_assistantOutputBufferVersion != conversationStateVersion)
+            if (this._assistantOutputBufferVersion != conversationStateVersion)
             {
-                _assistantOutputBuffer.Clear();
-                _assistantOutputBufferVersion = conversationStateVersion;
+                _ = this._assistantOutputBuffer.Clear();
+                this._assistantOutputBufferVersion = conversationStateVersion;
             }
 
-            _assistantOutputBuffer.Append(chunk);
-            if (!_assistantOutputFlushScheduled)
+            _ = this._assistantOutputBuffer.Append(chunk);
+            if (!this._assistantOutputFlushScheduled)
             {
-                _assistantOutputFlushScheduled = true;
+                this._assistantOutputFlushScheduled = true;
                 shouldScheduleFlush = true;
             }
         }
@@ -3934,107 +3908,107 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         _ = Task.Run(async () =>
         {
             await Task.Delay(AssistantOutputFlushDelayMilliseconds).ConfigureAwait(false);
-            await FlushPendingAssistantOutputAsync().ConfigureAwait(false);
+            await this.FlushPendingAssistantOutputAsync().ConfigureAwait(false);
         });
     }
 
     private Task FlushPendingAssistantOutputAsync()
     {
-        var dispatcher = Application.Current.Dispatcher;
+        Dispatcher dispatcher = Application.Current.Dispatcher;
         if (dispatcher.CheckAccess())
         {
-            FlushPendingAssistantOutput();
+            this.FlushPendingAssistantOutput();
             return Task.CompletedTask;
         }
 
-        return dispatcher.InvokeAsync(FlushPendingAssistantOutput, System.Windows.Threading.DispatcherPriority.Background).Task;
+        return dispatcher.InvokeAsync(this.FlushPendingAssistantOutput, System.Windows.Threading.DispatcherPriority.Background).Task;
     }
 
     private void FlushPendingAssistantOutput()
     {
         string chunk;
         long conversationStateVersion;
-        lock (_assistantOutputSync)
+        lock (this._assistantOutputSync)
         {
-            chunk = _assistantOutputBuffer.ToString();
-            conversationStateVersion = _assistantOutputBufferVersion;
-            _assistantOutputBuffer.Clear();
-            _assistantOutputFlushScheduled = false;
+            chunk = this._assistantOutputBuffer.ToString();
+            conversationStateVersion = this._assistantOutputBufferVersion;
+            _ = this._assistantOutputBuffer.Clear();
+            this._assistantOutputFlushScheduled = false;
         }
 
-        if (string.IsNullOrEmpty(chunk) || !IsConversationStateCurrent(conversationStateVersion))
+        if (string.IsNullOrEmpty(chunk) || !this.IsConversationStateCurrent(conversationStateVersion))
         {
             return;
         }
 
-        ClearTransientStatusMessage();
-        if (_currentAssistantMessage is null)
+        this.ClearTransientStatusMessage();
+        if (this._currentAssistantMessage is null)
         {
-            _currentAssistantMessage = CreateDisplayMessage(false, string.Empty);
-            Messages.Add(_currentAssistantMessage);
+            this._currentAssistantMessage = this.CreateDisplayMessage(false, string.Empty);
+            this.Messages.Add(this._currentAssistantMessage);
         }
 
-        _currentAssistantMessage.Text += chunk;
+        this._currentAssistantMessage.Text += chunk;
     }
 
     private void ClearPendingAssistantOutput()
     {
-        lock (_assistantOutputSync)
+        lock (this._assistantOutputSync)
         {
-            if (_assistantOutputBuffer.Length == 0)
+            if (this._assistantOutputBuffer.Length == 0)
             {
-                _assistantOutputFlushScheduled = false;
+                this._assistantOutputFlushScheduled = false;
                 return;
             }
 
-            _assistantOutputBuffer.Clear();
-            _assistantOutputFlushScheduled = false;
+            _ = this._assistantOutputBuffer.Clear();
+            this._assistantOutputFlushScheduled = false;
         }
     }
 
     private void AppendStderr(string text)
     {
-        AppendOutput("[" + _localization.OutputTagStderr + "] " + text);
+        this.AppendOutput("[" + this.Localization.OutputTagStderr + "] " + text);
     }
 
     private void UpdateTokenUsage(long tokensInContextWindow, long? contextWindow)
     {
         if (contextWindow.HasValue && contextWindow.Value > 0)
         {
-            _contextTokenBudget = contextWindow.Value;
+            this._contextTokenBudget = contextWindow.Value;
         }
 
-        var clampedTokens = Math.Max(0d, tokensInContextWindow);
+        double clampedTokens = Math.Max(0d, tokensInContextWindow);
 
         RunOnUiThread(() =>
         {
-            _lastKnownContextTokensInWindow = clampedTokens;
-            _lastKnownRemainingTokens = GetContextRemainingTokenCount(clampedTokens, _contextTokenBudget);
-            OnPropertyChanged(nameof(ContextTokensLabel));
-            OnPropertyChanged(nameof(ContextWindowDetail));
+            this._lastKnownContextTokensInWindow = clampedTokens;
+            this._lastKnownRemainingTokens = GetContextRemainingTokenCount(clampedTokens, this._contextTokenBudget);
+            this.OnPropertyChanged(nameof(this.ContextTokensLabel));
+            this.OnPropertyChanged(nameof(this.ContextWindowDetail));
         });
 
-        SetContextRemainingRatio(GetContextRemainingRatio(clampedTokens, _contextTokenBudget));
+        this.SetContextRemainingRatio(GetContextRemainingRatio(clampedTokens, this._contextTokenBudget));
     }
 
     private void UpdateContextEstimate()
     {
-        var estimatedPromptTokens = Math.Max(1d, Prompt.Length / 4d);
-        var estimatedImageTokens = AttachedImages.Count * 1200d;
-        var estimated = estimatedPromptTokens + estimatedImageTokens;
+        double estimatedPromptTokens = Math.Max(1d, this.Prompt.Length / 4d);
+        double estimatedImageTokens = this.AttachedImages.Count * 1200d;
+        double estimated = estimatedPromptTokens + estimatedImageTokens;
         RunOnUiThread(() =>
         {
-            _lastKnownContextTokensInWindow = estimated;
-            _lastKnownRemainingTokens = GetContextRemainingTokenCount(estimated, _contextTokenBudget);
-            OnPropertyChanged(nameof(ContextTokensLabel));
-            OnPropertyChanged(nameof(ContextWindowDetail));
+            this._lastKnownContextTokensInWindow = estimated;
+            this._lastKnownRemainingTokens = GetContextRemainingTokenCount(estimated, this._contextTokenBudget);
+            this.OnPropertyChanged(nameof(this.ContextTokensLabel));
+            this.OnPropertyChanged(nameof(this.ContextWindowDetail));
         });
-        SetContextRemainingRatio(GetContextRemainingRatio(estimated, _contextTokenBudget));
+        this.SetContextRemainingRatio(GetContextRemainingRatio(estimated, this._contextTokenBudget));
     }
 
     private void SetContextRemainingRatio(double ratio)
     {
-        ContextRingGeometry = BuildRingGeometry(ratio);
+        this.ContextRingGeometry = BuildRingGeometry(ratio);
     }
 
     private static double GetContextRemainingRatio(double tokensInContextWindow, double contextWindow)
@@ -4044,9 +4018,9 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return 0d;
         }
 
-        var effectiveWindow = contextWindow - ContextWindowBaselineTokens;
-        var used = Math.Max(0d, tokensInContextWindow - ContextWindowBaselineTokens);
-        var remaining = Math.Max(0d, effectiveWindow - used);
+        double effectiveWindow = contextWindow - ContextWindowBaselineTokens;
+        double used = Math.Max(0d, tokensInContextWindow - ContextWindowBaselineTokens);
+        double remaining = Math.Max(0d, effectiveWindow - used);
         return Math.Max(0d, Math.Min(1d, remaining / effectiveWindow));
     }
 
@@ -4057,8 +4031,8 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return 0d;
         }
 
-        var effectiveWindow = contextWindow - ContextWindowBaselineTokens;
-        var used = Math.Max(0d, tokensInContextWindow - ContextWindowBaselineTokens);
+        double effectiveWindow = contextWindow - ContextWindowBaselineTokens;
+        double used = Math.Max(0d, tokensInContextWindow - ContextWindowBaselineTokens);
         return Math.Max(0d, effectiveWindow - used);
     }
 
@@ -4069,10 +4043,10 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static Geometry BuildRingGeometry(double ratio)
     {
-        var clampedRatio = Math.Max(0d, Math.Min(1d, ratio));
+        double clampedRatio = Math.Max(0d, Math.Min(1d, ratio));
         if (clampedRatio >= 0.9995d)
         {
-            var fullCircle = Geometry.Parse("M 8,1 A 7,7 0 1 1 7.99,1");
+            Geometry fullCircle = Geometry.Parse("M 8,1 A 7,7 0 1 1 7.99,1");
             if (fullCircle.CanFreeze)
             {
                 fullCircle.Freeze();
@@ -4088,14 +4062,14 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
         const double center = 8d;
         const double radius = 7d;
-        var sweepAngle = clampedRatio * 359.999d;
-        var startAngle = -90d;
-        var endAngle = startAngle + sweepAngle;
-        var startPoint = PointOnCircle(center, radius, startAngle);
-        var endPoint = PointOnCircle(center, radius, endAngle);
+        double sweepAngle = clampedRatio * 359.999d;
+        double startAngle = -90d;
+        double endAngle = startAngle + sweepAngle;
+        Point startPoint = PointOnCircle(center, radius, startAngle);
+        Point endPoint = PointOnCircle(center, radius, endAngle);
 
-        var geometry = new StreamGeometry();
-        using (var context = geometry.Open())
+        StreamGeometry geometry = new();
+        using (StreamGeometryContext context = geometry.Open())
         {
             context.BeginFigure(startPoint, isFilled: false, isClosed: false);
             context.ArcTo(
@@ -4118,7 +4092,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static Point PointOnCircle(double center, double radius, double angleDegrees)
     {
-        var radians = angleDegrees * Math.PI / 180d;
+        double radians = angleDegrees * Math.PI / 180d;
         return new Point(
             center + (Math.Cos(radians) * radius),
             center + (Math.Sin(radians) * radius));
@@ -4128,13 +4102,13 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         RunOnUiThread(() =>
         {
-            if (_currentTransientStatusMessage is null)
+            if (this._currentTransientStatusMessage is null)
             {
                 return;
             }
 
-            Messages.Remove(_currentTransientStatusMessage);
-            _currentTransientStatusMessage = null;
+            _ = this.Messages.Remove(this._currentTransientStatusMessage);
+            this._currentTransientStatusMessage = null;
         });
     }
 
@@ -4142,11 +4116,11 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     {
         RunOnUiThread(() =>
         {
-            for (var index = Messages.Count - 1; index >= 0; index--)
+            for (int index = this.Messages.Count - 1; index >= 0; index--)
             {
-                if (Messages[index].IsEvent && !IsPlanEvent(Messages[index]))
+                if (this.Messages[index].IsEvent && !this.IsPlanEvent(this.Messages[index]))
                 {
-                    Messages.RemoveAt(index);
+                    this.Messages.RemoveAt(index);
                 }
             }
         });
@@ -4155,111 +4129,114 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     private bool IsPlanEvent(ChatMessage message)
     {
         return message.IsEvent
-            && string.Equals(message.Title, _localization.EventPlanTitle, StringComparison.CurrentCulture);
+            && string.Equals(message.Title, this.Localization.EventPlanTitle, StringComparison.CurrentCulture);
     }
 
     private void AppendFileReferenceToPrompt(string filePath)
     {
-        var fileReference = " @" + filePath;
-        PromptEditorText = string.IsNullOrWhiteSpace(PromptEditorText)
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        string fileReference = " @" + filePath;
+        this.PromptEditorText = string.IsNullOrWhiteSpace(this.PromptEditorText)
             ? ("@" + filePath)
-            : (PromptEditorText.TrimEnd() + fileReference);
+            : (this.PromptEditorText.TrimEnd() + fileReference);
     }
 
     private void ApplyRawPrompt(string? rawPrompt)
     {
-        var availableSkills = GetAvailableSkillsByName();
-        var formattedPrompt = FormatPromptSkillDisplay(rawPrompt ?? string.Empty, new HashSet<string>(availableSkills.Keys, StringComparer.OrdinalIgnoreCase), preserveWhitespace: true);
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        IReadOnlyDictionary<string, CodexSkillSummary> availableSkills = this.GetAvailableSkillsByName();
+        (IReadOnlyList<string> SkillNames, string DisplayText) formattedPrompt = FormatPromptSkillDisplay(rawPrompt ?? string.Empty, new HashSet<string>(availableSkills.Keys, StringComparer.OrdinalIgnoreCase), preserveWhitespace: true);
 
-        _promptEditorText = formattedPrompt.DisplayText;
-        SyncDetectedPromptSkills(formattedPrompt.SkillNames, availableSkills);
-        PromptDisplayText = _promptEditorText;
-        _prompt = BuildEffectivePrompt();
+        this._promptEditorText = formattedPrompt.DisplayText;
+        this.SyncDetectedPromptSkills(formattedPrompt.SkillNames, availableSkills);
+        this.PromptDisplayText = this._promptEditorText;
+        this._prompt = this.BuildEffectivePrompt();
 
-        OnPropertyChanged(nameof(Prompt));
-        OnPropertyChanged(nameof(PromptEditorText));
-        RefreshMentions();
-        UpdateContextEstimate();
-        SendCommand.RaiseCanExecuteChanged();
+        this.OnPropertyChanged(nameof(this.Prompt));
+        this.OnPropertyChanged(nameof(this.PromptEditorText));
+        this.RefreshMentions();
+        this.UpdateContextEstimate();
+        this.SendCommand.RaiseCanExecuteChanged();
     }
 
     private void ApplyPromptEditorText(string? editorText)
     {
-        var availableSkills = GetAvailableSkillsByName();
-        var formattedPrompt = FormatPromptSkillDisplay(editorText ?? string.Empty, new HashSet<string>(availableSkills.Keys, StringComparer.OrdinalIgnoreCase), preserveWhitespace: true);
-        var mergedSkillNames = DetectedPromptSkills
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        IReadOnlyDictionary<string, CodexSkillSummary> availableSkills = this.GetAvailableSkillsByName();
+        (IReadOnlyList<string> SkillNames, string DisplayText) formattedPrompt = FormatPromptSkillDisplay(editorText ?? string.Empty, new HashSet<string>(availableSkills.Keys, StringComparer.OrdinalIgnoreCase), preserveWhitespace: true);
+        string[] mergedSkillNames = this.DetectedPromptSkills
             .Where(skill => skill.IsEnabled && !string.IsNullOrWhiteSpace(skill.Name))
             .Select(skill => skill.Name)
             .Concat(formattedPrompt.SkillNames)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        _promptEditorText = formattedPrompt.DisplayText;
-        SyncDetectedPromptSkills(mergedSkillNames, availableSkills);
-        PromptDisplayText = _promptEditorText;
-        _prompt = BuildEffectivePrompt();
+        this._promptEditorText = formattedPrompt.DisplayText;
+        this.SyncDetectedPromptSkills(mergedSkillNames, availableSkills);
+        this.PromptDisplayText = this._promptEditorText;
+        this._prompt = this.BuildEffectivePrompt();
 
-        OnPropertyChanged(nameof(Prompt));
-        OnPropertyChanged(nameof(PromptEditorText));
-        RefreshMentions();
-        UpdateContextEstimate();
-        SendCommand.RaiseCanExecuteChanged();
+        this.OnPropertyChanged(nameof(this.Prompt));
+        this.OnPropertyChanged(nameof(this.PromptEditorText));
+        this.RefreshMentions();
+        this.UpdateContextEstimate();
+        this.SendCommand.RaiseCanExecuteChanged();
     }
 
     private IReadOnlyDictionary<string, CodexSkillSummary> GetAvailableSkillsByName()
     {
-        return Skills
+        return this.Skills
             .Where(skill => skill.IsEnabled && !string.IsNullOrWhiteSpace(skill.Name))
             .ToDictionary(skill => skill.Name!, StringComparer.OrdinalIgnoreCase);
     }
 
     private void SyncDetectedPromptSkills(IEnumerable<string> skillNames, IReadOnlyDictionary<string, CodexSkillSummary> availableSkills)
     {
-        var selectedSkills = new List<CodexSkillSummary>();
-        var uniqueSkillNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        List<CodexSkillSummary> selectedSkills = [];
+        HashSet<string> uniqueSkillNames = new(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var skillName in skillNames)
+        foreach (string skillName in skillNames)
         {
             if (string.IsNullOrWhiteSpace(skillName) || !uniqueSkillNames.Add(skillName))
             {
                 continue;
             }
 
-            if (availableSkills.TryGetValue(skillName, out var skill))
+            if (availableSkills.TryGetValue(skillName, out CodexSkillSummary? skill))
             {
                 selectedSkills.Add(skill);
             }
         }
 
-        DetectedPromptSkills.Clear();
-        foreach (var skill in selectedSkills)
+        this.DetectedPromptSkills.Clear();
+        foreach (CodexSkillSummary skill in selectedSkills)
         {
-            DetectedPromptSkills.Add(skill);
+            this.DetectedPromptSkills.Add(skill);
         }
 
-        OnPropertyChanged(nameof(HasDetectedPromptSkills));
+        this.OnPropertyChanged(nameof(this.HasDetectedPromptSkills));
     }
 
     private string BuildEffectivePrompt()
     {
-        var skillPrefix = string.Join(
+        string skillPrefix = string.Join(
             " ",
-            DetectedPromptSkills
+            this.DetectedPromptSkills
                 .Where(skill => skill.IsEnabled && !string.IsNullOrWhiteSpace(skill.Name))
                 .Select(skill => "/" + skill.Name)
                 .Distinct(StringComparer.OrdinalIgnoreCase));
 
         if (string.IsNullOrWhiteSpace(skillPrefix))
         {
-            return _promptEditorText;
+            return this._promptEditorText;
         }
 
-        if (string.IsNullOrWhiteSpace(_promptEditorText))
+        if (string.IsNullOrWhiteSpace(this._promptEditorText))
         {
             return skillPrefix;
         }
 
-        return skillPrefix + " " + _promptEditorText.TrimStart();
+        return skillPrefix + " " + this._promptEditorText.TrimStart();
     }
 
     private void RemoveDetectedPromptSkill(object? parameter)
@@ -4269,21 +4246,21 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return;
         }
 
-        var remainingSkills = DetectedPromptSkills
+        string[] remainingSkills = this.DetectedPromptSkills
             .Where(skill => !string.Equals(skill.Name, skillToRemove.Name, StringComparison.OrdinalIgnoreCase))
             .Select(skill => skill.Name)
             .ToArray();
 
-        SyncDetectedPromptSkills(remainingSkills, GetAvailableSkillsByName());
-        _prompt = BuildEffectivePrompt();
-        OnPropertyChanged(nameof(Prompt));
-        UpdateContextEstimate();
-        SendCommand.RaiseCanExecuteChanged();
+        this.SyncDetectedPromptSkills(remainingSkills, this.GetAvailableSkillsByName());
+        this._prompt = this.BuildEffectivePrompt();
+        this.OnPropertyChanged(nameof(this.Prompt));
+        this.UpdateContextEstimate();
+        this.SendCommand.RaiseCanExecuteChanged();
     }
 
     private static bool IsImageFile(string path)
     {
-        var extension = Path.GetExtension(path);
+        string extension = Path.GetExtension(path);
         return extension.Equals(".png", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
@@ -4314,13 +4291,13 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return string.Empty;
         }
 
-        var atIndex = prompt.LastIndexOf('@');
+        int atIndex = prompt.LastIndexOf('@');
         if (atIndex < 0)
         {
             return string.Empty;
         }
 
-        var tail = prompt.Substring(atIndex + 1);
+        string tail = prompt.Substring(atIndex + 1);
         if (tail.Contains(" ") || tail.Contains(Environment.NewLine))
         {
             return string.Empty;
@@ -4331,14 +4308,14 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static IReadOnlyList<string> ExtractPromptSkillNames(string prompt)
     {
-        var detectedNames = new List<string>();
+        List<string> detectedNames = [];
         if (string.IsNullOrWhiteSpace(prompt))
         {
             return detectedNames;
         }
 
-        var uniqueNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var index = 0; index < prompt.Length; index++)
+        HashSet<string> uniqueNames = new(StringComparer.OrdinalIgnoreCase);
+        for (int index = 0; index < prompt.Length; index++)
         {
             if (prompt[index] != '/')
             {
@@ -4350,8 +4327,8 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
                 continue;
             }
 
-            var start = index + 1;
-            var end = start;
+            int start = index + 1;
+            int end = start;
             while (end < prompt.Length && IsSkillNameCharacter(prompt[end]))
             {
                 end++;
@@ -4362,7 +4339,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
                 continue;
             }
 
-            var skillName = prompt.Substring(start, end - start);
+            string skillName = prompt.Substring(start, end - start);
             if (uniqueNames.Add(skillName))
             {
                 detectedNames.Add(skillName);
@@ -4374,22 +4351,22 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static (IReadOnlyList<string> SkillNames, string DisplayText) FormatPromptSkillDisplay(string prompt, ISet<string> availableSkillNames, bool preserveWhitespace = false)
     {
-        var detectedNames = new List<string>();
+        List<string> detectedNames = [];
         if (string.IsNullOrWhiteSpace(prompt) || availableSkillNames.Count == 0)
         {
             return (detectedNames, prompt);
         }
 
-        var uniqueNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var builder = new System.Text.StringBuilder(prompt.Length);
+        HashSet<string> uniqueNames = new(StringComparer.OrdinalIgnoreCase);
+        StringBuilder builder = new(prompt.Length);
 
-        for (var index = 0; index < prompt.Length; index++)
+        for (int index = 0; index < prompt.Length; index++)
         {
             if (prompt[index] == '/'
                 && (index == 0 || char.IsWhiteSpace(prompt[index - 1])))
             {
-                var start = index + 1;
-                var end = start;
+                int start = index + 1;
+                int end = start;
                 while (end < prompt.Length && IsSkillNameCharacter(prompt[end]))
                 {
                     end++;
@@ -4397,7 +4374,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
                 if (end > start)
                 {
-                    var skillName = prompt.Substring(start, end - start);
+                    string skillName = prompt.Substring(start, end - start);
                     if (availableSkillNames.Contains(skillName))
                     {
                         if (uniqueNames.Add(skillName))
@@ -4413,7 +4390,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
                 }
             }
 
-            builder.Append(prompt[index]);
+            _ = builder.Append(prompt[index]);
         }
 
         return (detectedNames, preserveWhitespace ? builder.ToString() : CleanupPromptDisplayText(builder.ToString()));
@@ -4426,9 +4403,9 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return string.Empty;
         }
 
-        var normalized = text.Replace("\r\n", "\n");
-        var lines = normalized.Split('\n');
-        var cleanedLines = lines
+        string normalized = text.Replace("\r\n", "\n");
+        string[] lines = normalized.Split('\n');
+        string[] cleanedLines = lines
             .Select(CollapseInlineWhitespace)
             .ToArray();
 
@@ -4442,23 +4419,23 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             return string.Empty;
         }
 
-        var builder = new System.Text.StringBuilder(text.Length);
-        var previousWasWhitespace = false;
+        StringBuilder builder = new(text.Length);
+        bool previousWasWhitespace = false;
 
-        foreach (var character in text)
+        foreach (char character in text)
         {
-            if (character == ' ' || character == '\t')
+            if (character is ' ' or '\t')
             {
                 if (!previousWasWhitespace)
                 {
-                    builder.Append(' ');
+                    _ = builder.Append(' ');
                     previousWasWhitespace = true;
                 }
 
                 continue;
             }
 
-            builder.Append(character);
+            _ = builder.Append(character);
             previousWasWhitespace = false;
         }
 
@@ -4472,37 +4449,37 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static string SaveBitmapToTempPng(BitmapSource bitmapSource)
     {
-        var directory = Path.Combine(Path.GetTempPath(), "CodexVsixImages");
-        Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, $"clipboard_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png");
+        string directory = Path.Combine(Path.GetTempPath(), "CodexVsixImages");
+        _ = Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, $"clipboard_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png");
 
-        var encoder = new PngBitmapEncoder();
+        PngBitmapEncoder encoder = new();
         encoder.Frames.Add(BitmapFrame.Create(bitmapSource));
-        using var stream = File.Create(path);
+        using FileStream stream = File.Create(path);
         encoder.Save(stream);
         return path;
     }
 
     private void AppendOutput(string text)
     {
-        RunOnUiThread(() => _output += text);
-        RunOnUiThread(() => OnPropertyChanged(nameof(Output)));
+        RunOnUiThread(() => this._output += text);
+        RunOnUiThread(() => this.OnPropertyChanged(nameof(this.Output)));
     }
 
     private long CaptureConversationStateVersion()
     {
-        return Interlocked.Read(ref _conversationStateVersion);
+        return Interlocked.Read(ref this._conversationStateVersion);
     }
 
     private long BeginConversationStateChange()
     {
-        ClearPendingAssistantOutput();
-        return Interlocked.Increment(ref _conversationStateVersion);
+        this.ClearPendingAssistantOutput();
+        return Interlocked.Increment(ref this._conversationStateVersion);
     }
 
     private bool IsConversationStateCurrent(long version)
     {
-        return CaptureConversationStateVersion() == version;
+        return this.CaptureConversationStateVersion() == version;
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
@@ -4512,7 +4489,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private static void RunOnUiThread(Action action)
     {
-        var dispatcher = Application.Current?.Dispatcher;
+        Dispatcher? dispatcher = Application.Current?.Dispatcher;
         if (dispatcher is null || dispatcher.CheckAccess())
         {
             action();

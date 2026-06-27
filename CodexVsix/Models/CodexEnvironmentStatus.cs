@@ -24,7 +24,7 @@ public sealed class CodexEnvironmentStatus
 
     public string ErrorDetail { get; set; } = string.Empty;
 
-    public bool IsReady => Stage == CodexSetupStage.Ready;
+    public bool IsReady => this.Stage == CodexSetupStage.Ready;
 
-    public bool HasAccountEmail => !string.IsNullOrWhiteSpace(AccountEmail);
+    public bool HasAccountEmail => !string.IsNullOrWhiteSpace(this.AccountEmail);
 }

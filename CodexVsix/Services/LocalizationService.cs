@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Globalization;
+
 using CodexVsix.Models;
 
 namespace CodexVsix.Services;
@@ -1480,301 +1481,301 @@ public sealed class LocalizationService
 
     public LocalizationService(string? languageOverride = null)
     {
-        var preferredCulture = ResolvePreferredCulture(languageOverride);
+        CultureInfo preferredCulture = ResolvePreferredCulture(languageOverride);
 
-        Culture = ResolveSupportedCulture(preferredCulture);
-        LanguageTag = Culture.Name;
-        _strings = GetLanguageStrings(Culture);
+        this.Culture = ResolveSupportedCulture(preferredCulture);
+        this.LanguageTag = this.Culture.Name;
+        this._strings = GetLanguageStrings(this.Culture);
     }
 
     public CultureInfo Culture { get; }
 
     public string LanguageTag { get; }
 
-    public string TopicsTitle => Get("TopicsTitle");
-    public string HistoryTitle => Get("HistoryTitle");
-    public string HistoryTopicsTitle => GetLocalizedString("HistoryTopicsTitle", "Conversas anteriores");
-    public string UseButton => Get("UseButton");
-    public string NewTopicButton => Get("NewTopicButton");
-    public string RenameTopicButton => Get("RenameTopicButton");
-    public string RenameTopicPlaceholder => Get("RenameTopicPlaceholder");
-    public string CloseButton => GetLocalizedString("CloseButton", "Fechar");
-    public string AccountTitle => GetLocalizedString("AccountTitle", "Conta");
-    public string AccountSubtitle => GetLocalizedString("AccountSubtitle", "Gerencie a conta do Codex usada por esta extensão.");
-    public string SignedInAsLabel => GetLocalizedString("SignedInAsLabel", "Conectado como");
-    public string NotSignedInLabel => GetLocalizedString("NotSignedInLabel", "Sem login");
-    public string LogOutAndLogInButton => GetLocalizedString("LogOutAndLogInButton", "Sair e fazer login novamente");
-    public string CodexSettingsNav => GetLocalizedString("CodexSettingsNav", "Configurações do Codex");
-    public string IdeSettingsNav => GetLocalizedString("IdeSettingsNav", "Configurações da IDE");
-    public string McpSettingsNav => GetLocalizedString("McpSettingsNav", "Configurações de MCP");
-    public string SkillsSettingsNav => GetLocalizedString("SkillsSettingsNav", "Configurações de skills");
-    public string LanguageNav => GetLocalizedString("LanguageNav", "Idioma");
-    public string HistoryNav => GetLocalizedString("HistoryNav", "Histórico");
-    public string LanguageTitle => GetLocalizedString("LanguageTitle", "Idioma");
-    public string LanguageSubtitle => GetLocalizedString("LanguageSubtitle", "Substitua a detecção automática de idioma da interface.");
-    public string LanguageAutoOption => GetLocalizedString("LanguageAutoOption", "Automático");
-    public string CurrentLanguageLabel => GetLocalizedString("CurrentLanguageLabel", "Idioma atual");
-    public string HistorySearchPlaceholder => GetLocalizedString("HistorySearchPlaceholder", "Procurar no historico");
-    public string AllTasksLabel => GetLocalizedString("AllTasksLabel", "Todo o historico");
-    public string ViewAllTasksLabel => GetLocalizedString("ViewAllTasksLabel", "Ver historico completo");
-    public string TasksTitle => GetLocalizedString("TasksTitle", "Historico");
-    public string RecentTasksTitle => GetLocalizedString("RecentTasksTitle", "Historico recente");
-    public string NoTasksDetected => GetLocalizedString("NoTasksDetected", "Nenhum historico ainda.");
-    public string PersonalAccountLabel => AccountTitle;
-    public string OpenAgentSettingsLabel => GetLocalizedString("OpenAgentSettingsLabel", "Abrir configurações do agente");
-    public string ReadDocsLabel => GetLocalizedString("ReadDocsLabel", "Ler documentação");
-    public string OpenConfigTomlLabel => GetLocalizedString("OpenConfigTomlLabel", "Abrir config.toml");
-    public string SearchLanguagesPlaceholder => GetLocalizedString("SearchLanguagesPlaceholder", "Procurar idioma");
-    public string NoLanguagesFound => GetLocalizedString("NoLanguagesFound", "Nenhum idioma encontrado.");
-    public string KeyboardShortcutsLabel => GetLocalizedString("KeyboardShortcutsLabel", "Atalhos do teclado");
-    public string LogOutLabel => GetLocalizedString("LogOutLabel", "Sair");
-    public string NoTopicsAvailable => GetLocalizedString("NoTopicsAvailable", "Nenhuma conversa anterior ainda.");
-    public string PlanModeLabel => Get("PlanModeLabel");
-    public string QuestionModeLabel => Get("QuestionModeLabel");
-    public string AgentModeLabel => Get("AgentModeLabel");
-    public string ReasoningEffortLabel => GetLocalizedString("ReasoningEffortLabel", "Esforço de raciocínio");
-    public string AppsTitle => Get("AppsTitle");
-    public string McpServersTitle => Get("McpServersTitle");
-    public string DetectedSkillsTitle => GetLocalizedString("DetectedSkillsTitle", "Skills detectadas");
-    public string SettingsTitle => Get("SettingsTitle");
-    public string ExecutableLabel => Get("ExecutableLabel");
-    public string WorkingDirectoryLabel => Get("WorkingDirectoryLabel");
-    public string CodexConfigLabel => GetLocalizedString("CodexConfigLabel", "Configuração do Codex");
-    public string CodexSkillsLabel => GetLocalizedString("CodexSkillsLabel", "Pasta de skills");
-    public string ManagedMcpTitle => GetLocalizedString("ManagedMcpTitle", "MCPs gerenciados");
-    public string ManagedMcpDescription => GetLocalizedString("ManagedMcpDescription", "Configure entradas de MCP pela interface da extensão, sem editar TOML manualmente.");
-    public string ManagedMcpNameLabel => GetLocalizedString("ManagedMcpNameLabel", "Nome do servidor");
-    public string ManagedMcpTransportLabel => GetLocalizedString("ManagedMcpTransportLabel", "Transporte");
-    public string ManagedMcpCommandLabel => GetLocalizedString("ManagedMcpCommandLabel", "Comando");
-    public string ManagedMcpArgsLabel => GetLocalizedString("ManagedMcpArgsLabel", "Argumentos, um por linha");
-    public string ManagedMcpUrlLabel => GetLocalizedString("ManagedMcpUrlLabel", "URL");
-    public string ManagedMcpStdioOption => GetLocalizedString("ManagedMcpStdioOption", "Comando (stdio)");
-    public string ManagedMcpUrlOption => Get("ManagedMcpUrlOption");
-    public string ManagedMcpAddStdioButton => GetLocalizedString("ManagedMcpAddStdioButton", "Adicionar stdio");
-    public string ManagedMcpAddUrlButton => GetLocalizedString("ManagedMcpAddUrlButton", "Adicionar URL");
-    public string ManagedMcpRemoveButton => GetLocalizedString("ManagedMcpRemoveButton", "Remover");
-    public string ManagedMcpApplyButton => GetLocalizedString("ManagedMcpApplyButton", "Aplicar e atualizar");
-    public string ManagedMcpHint => GetLocalizedString("ManagedMcpHint", "Somente entradas válidas e habilitadas são aplicadas. Use apenas letras, números, '-' ou '_' no nome.");
-    public string SkillsTitle => Get("SkillsTitle");
-    public string SkillsDescription => GetLocalizedString("SkillsDescription", "Crie e abra skills globais no mesmo lugar em que você configura a integração do Codex.");
-    public string SkillsLearnMore => GetLocalizedString("SkillsLearnMore", "Dê superpoderes ao Codex.");
-    public string InstalledSkillsTitle => GetLocalizedString("InstalledSkillsTitle", "Instaladas");
-    public string RecommendedSkillsTitle => GetLocalizedString("RecommendedSkillsTitle", "Recomendadas");
-    public string SearchSkillsPlaceholder => GetLocalizedString("SearchSkillsPlaceholder", "Buscar skills");
-    public string InstallSkillButton => GetLocalizedString("InstallSkillButton", "Instalar");
-    public string NoRecommendedSkills => GetLocalizedString("NoRecommendedSkills", "Nenhuma skill recomendada disponível.");
-    public string IncludeIdeContextLabel => GetLocalizedString("IncludeIdeContextLabel", "Incluir contexto da IDE");
-    public string SpeedLabel => GetLocalizedString("SpeedLabel", "Velocidade");
-    public string AddPhotosFilesMenu => GetLocalizedString("AddPhotosFilesMenu", "Adicionar fotos e arquivos");
-    public string McpShortcutsTitle => GetLocalizedString("McpShortcutsTitle", "Atalhos MCP");
-    public string PermissionsTitle => GetLocalizedString("PermissionsTitle", "Permissões");
-    public string DefaultPermissionsLabel => GetLocalizedString("DefaultPermissionsLabel", "Permissões padrão");
-    public string ContextWindowTitle => GetLocalizedString("ContextWindowTitle", "Janela de contexto");
-    public string ContinueInTitle => GetLocalizedString("ContinueInTitle", "Continuar em");
-    public string LocalProjectLabel => GetLocalizedString("LocalProjectLabel", "Projeto local");
-    public string RateLimitsTitle => GetLocalizedString("RateLimitsTitle", "Rate limits restantes");
-    public string RateLimitsUnavailable => GetLocalizedString("RateLimitsUnavailable", "Rate limits indisponíveis.");
-    public string PlanLabelShort => GetLocalizedString("PlanLabelShort", "Plano");
-    public string PrimaryWindowLabel => GetLocalizedString("PrimaryWindowLabel", "Janela principal");
-    public string SecondaryWindowLabel => GetLocalizedString("SecondaryWindowLabel", "Janela secundária");
-    public string CreditsLabel => GetLocalizedString("CreditsLabel", "Créditos");
-    public string RateLimitRemainingSuffix => GetLocalizedString("RateLimitRemainingSuffix", "restantes");
-    public string RateLimitResetsPrefix => GetLocalizedString("RateLimitResetsPrefix", "reinicia");
-    public string RateLimitUnlimitedLabel => GetLocalizedString("RateLimitUnlimitedLabel", "Ilimitado");
-    public string RateLimitWeeklyLabel => GetLocalizedString("RateLimitWeeklyLabel", "Semanal");
-    public string PreferredMcpTitle => GetLocalizedString("PreferredMcpTitle", "MCPs preferidos");
-    public string SkillNameLabel => GetLocalizedString("SkillNameLabel", "Nome da skill");
-    public string SkillDescriptionLabel => GetLocalizedString("SkillDescriptionLabel", "Descrição inicial");
-    public string CreateSkillButton => GetLocalizedString("CreateSkillButton", "Criar skill");
-    public string OpenSkillsFolderButton => GetLocalizedString("OpenSkillsFolderButton", "Abrir pasta de skills");
-    public string OpenConfigButton => GetLocalizedString("OpenConfigButton", "Abrir config");
-    public string SkillOpenButton => GetLocalizedString("SkillOpenButton", "Abrir");
-    public string RefreshStatusButton => GetLocalizedString("RefreshStatusButton", "Atualizar");
-    public string EnabledLabel => GetLocalizedString("EnabledLabel", "Habilitado");
-    public string OpenPanelButton => GetLocalizedString("OpenPanelButton", "Abrir");
-    public string NoSkillsDetected => GetLocalizedString("NoSkillsDetected", "Nenhuma skill detectada ainda.");
-    public string NoManagedMcpServers => GetLocalizedString("NoManagedMcpServers", "Nenhum servidor MCP gerenciado foi configurado.");
-    public string VerbosityLabel => Get("VerbosityLabel");
-    public string ApprovalPolicyLabel => Get("ApprovalPolicyLabel");
-    public string RawOutputLabel => Get("RawOutputLabel");
-    public string InsertButton => Get("InsertButton");
-    public string ComposerPlaceholder => Get("ComposerPlaceholder");
-    public string AddAttachmentTooltip => Get("AddAttachmentTooltip");
-    public string PasteImageTooltip => Get("PasteImageTooltip");
-    public string SendTooltip => Get("SendTooltip");
-    public string StopTooltip => GetLocalizedString("StopTooltip", "Parar resposta");
-    public string StoppingTooltip => GetLocalizedString("StoppingTooltip", "Parando resposta");
-    public string HistoryTooltip => Get("HistoryTooltip");
-    public string SettingsTooltip => Get("SettingsTooltip");
-    public string SetupCheckingTitle => GetLocalizedString("SetupCheckingTitle", "Verificando ambiente do Codex");
-    public string SetupCheckingSummary => GetLocalizedString("SetupCheckingSummary", "Validando executável do Codex, autenticação e configuração local.");
-    public string SetupMissingExecutableTitle => GetLocalizedString("SetupMissingExecutableTitle", "Runtime do Codex não encontrado");
-    public string SetupMissingExecutableSummary => GetLocalizedString("SetupMissingExecutableSummary", "Nenhum executável compatível do Codex pôde ser resolvido a partir do caminho configurado ou do ambiente local.");
-    public string SetupMissingAuthTitle => GetLocalizedString("SetupMissingAuthTitle", "Codex disponível, mas sem autenticação OpenAI");
-    public string SetupMissingAuthSummary => GetLocalizedString("SetupMissingAuthSummary", "Faça login no Codex ou forneça um OPENAI_API_KEY antes de iniciar uma sessão.");
-    public string SetupMissingProviderAuthTitle => GetLocalizedString("SetupMissingProviderAuthTitle", "Faltam credenciais do provider do Codex");
-    public string SetupMissingProviderAuthSummary => GetLocalizedString("SetupMissingProviderAuthSummary", "O provider ativo está configurado no config.toml, mas as credenciais exigidas não estão disponíveis.");
-    public string SetupReadyTitle => GetLocalizedString("SetupReadyTitle", "Codex pronto para uso");
-    public string SetupReadySummary => GetLocalizedString("SetupReadySummary", "A extensão já consegue iniciar sessões usando o executável resolvido do Codex.");
-    public string SetupErrorTitle => GetLocalizedString("SetupErrorTitle", "A configuração do Codex precisa de atenção");
-    public string SetupErrorSummary => GetLocalizedString("SetupErrorSummary", "A extensão encontrou o Codex, mas não conseguiu validar o ambiente.");
-    public string SetupInstallButton => GetLocalizedString("SetupInstallButton", "Copiar comando de instalação");
-    public string SetupLoginButton => GetLocalizedString("SetupLoginButton", "Abrir login");
-    public string SetupRefreshButton => GetLocalizedString("SetupRefreshButton", "Atualizar status");
-    public string SetupSettingsButton => GetLocalizedString("SetupSettingsButton", "Abrir configurações");
-    public string SetupInstallHint => GetLocalizedString("SetupInstallHint", "Comando de instalação");
-    public string SetupExecutableHint => GetLocalizedString("SetupExecutableHint", "Executável");
-    public string SetupAuthHint => GetLocalizedString("SetupAuthHint", "Autenticação");
-    public string SetupVersionHint => GetLocalizedString("SetupVersionHint", "Versão");
-    public string SetupAuthFileLabel => GetLocalizedString("SetupAuthFileLabel", "Usando ~/.codex/auth.json");
-    public string SetupApiKeyLabel => GetLocalizedString("SetupApiKeyLabel", "Usando OPENAI_API_KEY");
-    public string SetupManagedLoginLabel => GetLocalizedString("SetupManagedLoginLabel", "Usando login do Codex");
-    public string SetupConfigProviderLabel => GetLocalizedString("SetupConfigProviderLabel", "Usando provider do config.toml");
-    public string SetupConfigProfileLabelFormat => GetLocalizedString("SetupConfigProfileLabelFormat", "Usando perfil {0} do config.toml");
-    public string SetupMissingAuthDetail => GetLocalizedString("SetupMissingAuthDetail", "Execute `codex login` ou configure uma API key da OpenAI.");
-    public string SetupMissingProviderAuthDetail => GetLocalizedString("SetupMissingProviderAuthDetail", "Atualize o config.toml ou defina a variável de ambiente do provider antes de iniciar uma sessão.");
-    public string SetupInstallDetail => GetLocalizedString("SetupInstallDetail", "Instalação recomendada: `npm install -g @openai/codex`");
-    public string LocalButton => Get("LocalButton");
-    public string RemoveAttachmentHoverLabel => Get("RemoveAttachmentHoverLabel");
-    public string ApprovalCommandTitle => Get("ApprovalCommandTitle");
-    public string ApprovalFileChangeTitle => Get("ApprovalFileChangeTitle");
-    public string UserInputTitle => Get("UserInputTitle");
-    public string ApprovalReasonLabel => Get("ApprovalReasonLabel");
-    public string ApprovalCommandLabel => Get("ApprovalCommandLabel");
-    public string ApprovalWorkingDirectoryLabel => Get("ApprovalWorkingDirectoryLabel");
-    public string ApprovalGrantRootLabel => Get("ApprovalGrantRootLabel");
-    public string ApprovalAccept => Get("ApprovalAccept");
-    public string ApprovalAcceptForSession => Get("ApprovalAcceptForSession");
-    public string ApprovalAcceptWithExecpolicyAmendment => Get("ApprovalAcceptWithExecpolicyAmendment");
-    public string ApprovalApplyNetworkPolicyAmendment => Get("ApprovalApplyNetworkPolicyAmendment");
-    public string ApprovalDecline => Get("ApprovalDecline");
-    public string ApprovalCancel => Get("ApprovalCancel");
-    public string AllFilesFilter => Get("AllFilesFilter");
-    public string CodexNoResponse => Get("CodexNoResponse");
-    public string ExecutionCanceled => Get("ExecutionCanceled");
-    public string ExecutionError => Get("ExecutionError");
-    public string ProcessingStatus => Get("ProcessingStatus");
-    public string ImagePasteErrorPrefix => Get("ImagePasteErrorPrefix");
-    public string LoadTopicsErrorPrefix => Get("LoadTopicsErrorPrefix");
-    public string LoadModelsErrorPrefix => Get("LoadModelsErrorPrefix");
-    public string DeleteHistoryTooltip => Get("DeleteHistoryTooltip");
-    public string CopyButton => Get("CopyButton");
-    public string SelectAllButton => Get("SelectAllButton");
-    public string MarkdownTextModeLabel => GetLocalizedString("MarkdownTextModeLabel", "Texto");
-    public string MarkdownRenderedModeLabel => GetLocalizedString("MarkdownRenderedModeLabel", "Renderizado");
-    public string RunningStatus => Get("RunningStatus");
-    public string ReadyStatus => Get("ReadyStatus");
-    public string ContextWindowDetailFormat => Get("ContextWindowDetailFormat");
-    public string IdeContextPrefix => Get("IdeContextPrefix");
-    public string MermaidDiagramLabel => Get("MermaidDiagramLabel");
-    public string MermaidCodeLabel => Get("MermaidCodeLabel");
-    public string MermaidLoadingPreview => Get("MermaidLoadingPreview");
-    public string MermaidInitFailed => Get("MermaidInitFailed");
-    public string MermaidLoadFailedFormat => Get("MermaidLoadFailedFormat");
-    public string MermaidRenderFailed => Get("MermaidRenderFailed");
-    public string MermaidRenderFailedFormat => Get("MermaidRenderFailedFormat");
-    public string MermaidFreezeFailed => Get("MermaidFreezeFailed");
-    public string MermaidLoadTimeout => Get("MermaidLoadTimeout");
-    public string MermaidPreviewFallback => Get("MermaidPreviewFallback");
-    public string MermaidPreviewScriptError => Get("MermaidPreviewScriptError");
-    public string ToolWindowErrorMessage => Get("ToolWindowErrorMessage");
-    public string SettingsToolWindowErrorMessage => Get("SettingsToolWindowErrorMessage");
-    public string OpenWindowFailedMessage => Get("OpenWindowFailedMessage");
-    public string ExecutionCanceledTag => Get("ExecutionCanceledTag");
-    public string ExecutionErrorTag => Get("ExecutionErrorTag");
-    public string ExtensionContextPrefix => Get("ExtensionContextPrefix");
-    public string PreferredMcpPrefix => Get("PreferredMcpPrefix");
-    public string IdeContextSolutionLabel => Get("IdeContextSolutionLabel");
-    public string IdeContextActiveDocumentLabel => Get("IdeContextActiveDocumentLabel");
-    public string IdeContextSelectedItemsLabel => Get("IdeContextSelectedItemsLabel");
-    public string IdeContextOpenFilesLabel => Get("IdeContextOpenFilesLabel");
-    public string IdeContextSelectionLabel => Get("IdeContextSelectionLabel");
-    public string InvalidSkillNameMessage => Get("InvalidSkillNameMessage");
-    public string SkillTemplateSummary => Get("SkillTemplateSummary");
-    public string SkillTemplateWhenToUseHeading => Get("SkillTemplateWhenToUseHeading");
-    public string SkillTemplateWhenToUseBullet => Get("SkillTemplateWhenToUseBullet");
-    public string SkillTemplateFlowHeading => Get("SkillTemplateFlowHeading");
-    public string SkillTemplateFlowStep1 => Get("SkillTemplateFlowStep1");
-    public string SkillTemplateFlowStep2 => Get("SkillTemplateFlowStep2");
-    public string SkillTemplateFlowStep3 => Get("SkillTemplateFlowStep3");
-    public string CodexDetectedLabel => Get("CodexDetectedLabel");
-    public string EventPlanTitle => Get("EventPlanTitle");
-    public string EventPlanUpdated => Get("EventPlanUpdated");
-    public string EventReasoningTitle => Get("EventReasoningTitle");
-    public string EventReasoningUpdated => Get("EventReasoningUpdated");
-    public string EventCommandTitle => Get("EventCommandTitle");
-    public string EventWorkingDirectoryLabel => Get("EventWorkingDirectoryLabel");
-    public string EventOutputLabel => Get("EventOutputLabel");
-    public string EventFileChangesTitle => Get("EventFileChangesTitle");
-    public string EventUpdatedFiles => Get("EventUpdatedFiles");
-    public string EventFileUpdated => Get("EventFileUpdated");
-    public string EventMcpToolTitle => Get("EventMcpToolTitle");
-    public string EventArgumentsLabel => Get("EventArgumentsLabel");
-    public string EventErrorLabel => Get("EventErrorLabel");
-    public string EventResultLabel => Get("EventResultLabel");
-    public string EventToolTitle => Get("EventToolTitle");
-    public string EventAgentToolTitle => Get("EventAgentToolTitle");
-    public string EventAgentToolUsed => Get("EventAgentToolUsed");
-    public string EventPromptLabel => Get("EventPromptLabel");
-    public string EventWebSearchTitle => Get("EventWebSearchTitle");
-    public string EventImageViewTitle => Get("EventImageViewTitle");
-    public string EventImageViewed => Get("EventImageViewed");
-    public string EventImageGenerationTitle => Get("EventImageGenerationTitle");
-    public string EventImageGenerated => Get("EventImageGenerated");
-    public string EventReviewModeTitle => Get("EventReviewModeTitle");
-    public string EventEnteredReviewMode => Get("EventEnteredReviewMode");
-    public string EventExitedReviewMode => Get("EventExitedReviewMode");
-    public string EventContextTitle => Get("EventContextTitle");
-    public string EventConversationContextCompacted => Get("EventConversationContextCompacted");
-    public string EventToolCall => Get("EventToolCall");
-    public string EventCommandExecuted => Get("EventCommandExecuted");
-    public string EventMoreFormat => Get("EventMoreFormat");
-    public string EventMoreFilesFormat => Get("EventMoreFilesFormat");
-    public string EventPendingStatus => GetLocalizedString("EventPendingStatus", "pendente");
-    public string EventInProgressStatus => GetLocalizedString("EventInProgressStatus", "em andamento");
-    public string EventCompletedStatus => Get("EventCompletedStatus");
-    public string EventFailedStatus => Get("EventFailedStatus");
-    public string ToolWindowXamlLoadLogMessage => Get("ToolWindowXamlLoadLogMessage");
-    public string ToolWindowViewModelCreateLogMessage => Get("ToolWindowViewModelCreateLogMessage");
-    public string SettingsToolWindowXamlLoadLogMessage => Get("SettingsToolWindowXamlLoadLogMessage");
-    public string SettingsToolWindowViewModelCreateLogMessage => Get("SettingsToolWindowViewModelCreateLogMessage");
-    public string ToolWindowInitializeLogMessage => Get("ToolWindowInitializeLogMessage");
-    public string SettingsToolWindowInitializeLogMessage => Get("SettingsToolWindowInitializeLogMessage");
-    public string SettingsToolWindowOpenLogMessage => Get("SettingsToolWindowOpenLogMessage");
-    public string ToolWindowOpenLogMessage => Get("ToolWindowOpenLogMessage");
-    public string AsyncPanelInitializeLogMessage => Get("AsyncPanelInitializeLogMessage");
-    public string StartTurnFailedMessage => Get("StartTurnFailedMessage");
-    public string AppServerValidationFailed => Get("AppServerValidationFailed");
-    public string AppServerUnsupported => Get("AppServerUnsupported");
-    public string AppServerClosedUnexpectedly => Get("AppServerClosedUnexpectedly");
-    public string AppServerRequestFailed => Get("AppServerRequestFailed");
-    public string AppServerUnavailable => Get("AppServerUnavailable");
-    public string EventCommentaryTitle => Get("EventCommentaryTitle");
-    public string EventMcpProgressTitle => Get("EventMcpProgressTitle");
-    public string OutputTagSetup => Get("OutputTagSetup");
-    public string OutputTagAuth => Get("OutputTagAuth");
-    public string OutputTagSkills => Get("OutputTagSkills");
-    public string OutputTagRemoteSkills => Get("OutputTagRemoteSkills");
-    public string OutputTagInit => Get("OutputTagInit");
-    public string OutputTagServer => Get("OutputTagServer");
-    public string OutputTagStderr => Get("OutputTagStderr");
-    public string OutputTagAppServer => Get("OutputTagAppServer");
-    public string OutputTagApproval => Get("OutputTagApproval");
-    public string OutputTagUserInput => Get("OutputTagUserInput");
-    public string ExitCodeLabel => Get("ExitCodeLabel");
-    public string ManagedMcpDefaultName => Get("ManagedMcpDefaultName");
-    public string ManagedMcpDefaultUrlName => Get("ManagedMcpDefaultUrlName");
-    public string MermaidBundleNotFoundFormat => Get("MermaidBundleNotFoundFormat");
+    public string TopicsTitle => this.Get("TopicsTitle");
+    public string HistoryTitle => this.Get("HistoryTitle");
+    public string HistoryTopicsTitle => this.GetLocalizedString("HistoryTopicsTitle", "Conversas anteriores");
+    public string UseButton => this.Get("UseButton");
+    public string NewTopicButton => this.Get("NewTopicButton");
+    public string RenameTopicButton => this.Get("RenameTopicButton");
+    public string RenameTopicPlaceholder => this.Get("RenameTopicPlaceholder");
+    public string CloseButton => this.GetLocalizedString("CloseButton", "Fechar");
+    public string AccountTitle => this.GetLocalizedString("AccountTitle", "Conta");
+    public string AccountSubtitle => this.GetLocalizedString("AccountSubtitle", "Gerencie a conta do Codex usada por esta extensão.");
+    public string SignedInAsLabel => this.GetLocalizedString("SignedInAsLabel", "Conectado como");
+    public string NotSignedInLabel => this.GetLocalizedString("NotSignedInLabel", "Sem login");
+    public string LogOutAndLogInButton => this.GetLocalizedString("LogOutAndLogInButton", "Sair e fazer login novamente");
+    public string CodexSettingsNav => this.GetLocalizedString("CodexSettingsNav", "Configurações do Codex");
+    public string IdeSettingsNav => this.GetLocalizedString("IdeSettingsNav", "Configurações da IDE");
+    public string McpSettingsNav => this.GetLocalizedString("McpSettingsNav", "Configurações de MCP");
+    public string SkillsSettingsNav => this.GetLocalizedString("SkillsSettingsNav", "Configurações de skills");
+    public string LanguageNav => this.GetLocalizedString("LanguageNav", "Idioma");
+    public string HistoryNav => this.GetLocalizedString("HistoryNav", "Histórico");
+    public string LanguageTitle => this.GetLocalizedString("LanguageTitle", "Idioma");
+    public string LanguageSubtitle => this.GetLocalizedString("LanguageSubtitle", "Substitua a detecção automática de idioma da interface.");
+    public string LanguageAutoOption => this.GetLocalizedString("LanguageAutoOption", "Automático");
+    public string CurrentLanguageLabel => this.GetLocalizedString("CurrentLanguageLabel", "Idioma atual");
+    public string HistorySearchPlaceholder => this.GetLocalizedString("HistorySearchPlaceholder", "Procurar no historico");
+    public string AllTasksLabel => this.GetLocalizedString("AllTasksLabel", "Todo o historico");
+    public string ViewAllTasksLabel => this.GetLocalizedString("ViewAllTasksLabel", "Ver historico completo");
+    public string TasksTitle => this.GetLocalizedString("TasksTitle", "Historico");
+    public string RecentTasksTitle => this.GetLocalizedString("RecentTasksTitle", "Historico recente");
+    public string NoTasksDetected => this.GetLocalizedString("NoTasksDetected", "Nenhum historico ainda.");
+    public string PersonalAccountLabel => this.AccountTitle;
+    public string OpenAgentSettingsLabel => this.GetLocalizedString("OpenAgentSettingsLabel", "Abrir configurações do agente");
+    public string ReadDocsLabel => this.GetLocalizedString("ReadDocsLabel", "Ler documentação");
+    public string OpenConfigTomlLabel => this.GetLocalizedString("OpenConfigTomlLabel", "Abrir config.toml");
+    public string SearchLanguagesPlaceholder => this.GetLocalizedString("SearchLanguagesPlaceholder", "Procurar idioma");
+    public string NoLanguagesFound => this.GetLocalizedString("NoLanguagesFound", "Nenhum idioma encontrado.");
+    public string KeyboardShortcutsLabel => this.GetLocalizedString("KeyboardShortcutsLabel", "Atalhos do teclado");
+    public string LogOutLabel => this.GetLocalizedString("LogOutLabel", "Sair");
+    public string NoTopicsAvailable => this.GetLocalizedString("NoTopicsAvailable", "Nenhuma conversa anterior ainda.");
+    public string PlanModeLabel => this.Get("PlanModeLabel");
+    public string QuestionModeLabel => this.Get("QuestionModeLabel");
+    public string AgentModeLabel => this.Get("AgentModeLabel");
+    public string ReasoningEffortLabel => this.GetLocalizedString("ReasoningEffortLabel", "Esforço de raciocínio");
+    public string AppsTitle => this.Get("AppsTitle");
+    public string McpServersTitle => this.Get("McpServersTitle");
+    public string DetectedSkillsTitle => this.GetLocalizedString("DetectedSkillsTitle", "Skills detectadas");
+    public string SettingsTitle => this.Get("SettingsTitle");
+    public string ExecutableLabel => this.Get("ExecutableLabel");
+    public string WorkingDirectoryLabel => this.Get("WorkingDirectoryLabel");
+    public string CodexConfigLabel => this.GetLocalizedString("CodexConfigLabel", "Configuração do Codex");
+    public string CodexSkillsLabel => this.GetLocalizedString("CodexSkillsLabel", "Pasta de skills");
+    public string ManagedMcpTitle => this.GetLocalizedString("ManagedMcpTitle", "MCPs gerenciados");
+    public string ManagedMcpDescription => this.GetLocalizedString("ManagedMcpDescription", "Configure entradas de MCP pela interface da extensão, sem editar TOML manualmente.");
+    public string ManagedMcpNameLabel => this.GetLocalizedString("ManagedMcpNameLabel", "Nome do servidor");
+    public string ManagedMcpTransportLabel => this.GetLocalizedString("ManagedMcpTransportLabel", "Transporte");
+    public string ManagedMcpCommandLabel => this.GetLocalizedString("ManagedMcpCommandLabel", "Comando");
+    public string ManagedMcpArgsLabel => this.GetLocalizedString("ManagedMcpArgsLabel", "Argumentos, um por linha");
+    public string ManagedMcpUrlLabel => this.GetLocalizedString("ManagedMcpUrlLabel", "URL");
+    public string ManagedMcpStdioOption => this.GetLocalizedString("ManagedMcpStdioOption", "Comando (stdio)");
+    public string ManagedMcpUrlOption => this.Get("ManagedMcpUrlOption");
+    public string ManagedMcpAddStdioButton => this.GetLocalizedString("ManagedMcpAddStdioButton", "Adicionar stdio");
+    public string ManagedMcpAddUrlButton => this.GetLocalizedString("ManagedMcpAddUrlButton", "Adicionar URL");
+    public string ManagedMcpRemoveButton => this.GetLocalizedString("ManagedMcpRemoveButton", "Remover");
+    public string ManagedMcpApplyButton => this.GetLocalizedString("ManagedMcpApplyButton", "Aplicar e atualizar");
+    public string ManagedMcpHint => this.GetLocalizedString("ManagedMcpHint", "Somente entradas válidas e habilitadas são aplicadas. Use apenas letras, números, '-' ou '_' no nome.");
+    public string SkillsTitle => this.Get("SkillsTitle");
+    public string SkillsDescription => this.GetLocalizedString("SkillsDescription", "Crie e abra skills globais no mesmo lugar em que você configura a integração do Codex.");
+    public string SkillsLearnMore => this.GetLocalizedString("SkillsLearnMore", "Dê superpoderes ao Codex.");
+    public string InstalledSkillsTitle => this.GetLocalizedString("InstalledSkillsTitle", "Instaladas");
+    public string RecommendedSkillsTitle => this.GetLocalizedString("RecommendedSkillsTitle", "Recomendadas");
+    public string SearchSkillsPlaceholder => this.GetLocalizedString("SearchSkillsPlaceholder", "Buscar skills");
+    public string InstallSkillButton => this.GetLocalizedString("InstallSkillButton", "Instalar");
+    public string NoRecommendedSkills => this.GetLocalizedString("NoRecommendedSkills", "Nenhuma skill recomendada disponível.");
+    public string IncludeIdeContextLabel => this.GetLocalizedString("IncludeIdeContextLabel", "Incluir contexto da IDE");
+    public string SpeedLabel => this.GetLocalizedString("SpeedLabel", "Velocidade");
+    public string AddPhotosFilesMenu => this.GetLocalizedString("AddPhotosFilesMenu", "Adicionar fotos e arquivos");
+    public string McpShortcutsTitle => this.GetLocalizedString("McpShortcutsTitle", "Atalhos MCP");
+    public string PermissionsTitle => this.GetLocalizedString("PermissionsTitle", "Permissões");
+    public string DefaultPermissionsLabel => this.GetLocalizedString("DefaultPermissionsLabel", "Permissões padrão");
+    public string ContextWindowTitle => this.GetLocalizedString("ContextWindowTitle", "Janela de contexto");
+    public string ContinueInTitle => this.GetLocalizedString("ContinueInTitle", "Continuar em");
+    public string LocalProjectLabel => this.GetLocalizedString("LocalProjectLabel", "Projeto local");
+    public string RateLimitsTitle => this.GetLocalizedString("RateLimitsTitle", "Rate limits restantes");
+    public string RateLimitsUnavailable => this.GetLocalizedString("RateLimitsUnavailable", "Rate limits indisponíveis.");
+    public string PlanLabelShort => this.GetLocalizedString("PlanLabelShort", "Plano");
+    public string PrimaryWindowLabel => this.GetLocalizedString("PrimaryWindowLabel", "Janela principal");
+    public string SecondaryWindowLabel => this.GetLocalizedString("SecondaryWindowLabel", "Janela secundária");
+    public string CreditsLabel => this.GetLocalizedString("CreditsLabel", "Créditos");
+    public string RateLimitRemainingSuffix => this.GetLocalizedString("RateLimitRemainingSuffix", "restantes");
+    public string RateLimitResetsPrefix => this.GetLocalizedString("RateLimitResetsPrefix", "reinicia");
+    public string RateLimitUnlimitedLabel => this.GetLocalizedString("RateLimitUnlimitedLabel", "Ilimitado");
+    public string RateLimitWeeklyLabel => this.GetLocalizedString("RateLimitWeeklyLabel", "Semanal");
+    public string PreferredMcpTitle => this.GetLocalizedString("PreferredMcpTitle", "MCPs preferidos");
+    public string SkillNameLabel => this.GetLocalizedString("SkillNameLabel", "Nome da skill");
+    public string SkillDescriptionLabel => this.GetLocalizedString("SkillDescriptionLabel", "Descrição inicial");
+    public string CreateSkillButton => this.GetLocalizedString("CreateSkillButton", "Criar skill");
+    public string OpenSkillsFolderButton => this.GetLocalizedString("OpenSkillsFolderButton", "Abrir pasta de skills");
+    public string OpenConfigButton => this.GetLocalizedString("OpenConfigButton", "Abrir config");
+    public string SkillOpenButton => this.GetLocalizedString("SkillOpenButton", "Abrir");
+    public string RefreshStatusButton => this.GetLocalizedString("RefreshStatusButton", "Atualizar");
+    public string EnabledLabel => this.GetLocalizedString("EnabledLabel", "Habilitado");
+    public string OpenPanelButton => this.GetLocalizedString("OpenPanelButton", "Abrir");
+    public string NoSkillsDetected => this.GetLocalizedString("NoSkillsDetected", "Nenhuma skill detectada ainda.");
+    public string NoManagedMcpServers => this.GetLocalizedString("NoManagedMcpServers", "Nenhum servidor MCP gerenciado foi configurado.");
+    public string VerbosityLabel => this.Get("VerbosityLabel");
+    public string ApprovalPolicyLabel => this.Get("ApprovalPolicyLabel");
+    public string RawOutputLabel => this.Get("RawOutputLabel");
+    public string InsertButton => this.Get("InsertButton");
+    public string ComposerPlaceholder => this.Get("ComposerPlaceholder");
+    public string AddAttachmentTooltip => this.Get("AddAttachmentTooltip");
+    public string PasteImageTooltip => this.Get("PasteImageTooltip");
+    public string SendTooltip => this.Get("SendTooltip");
+    public string StopTooltip => this.GetLocalizedString("StopTooltip", "Parar resposta");
+    public string StoppingTooltip => this.GetLocalizedString("StoppingTooltip", "Parando resposta");
+    public string HistoryTooltip => this.Get("HistoryTooltip");
+    public string SettingsTooltip => this.Get("SettingsTooltip");
+    public string SetupCheckingTitle => this.GetLocalizedString("SetupCheckingTitle", "Verificando ambiente do Codex");
+    public string SetupCheckingSummary => this.GetLocalizedString("SetupCheckingSummary", "Validando executável do Codex, autenticação e configuração local.");
+    public string SetupMissingExecutableTitle => this.GetLocalizedString("SetupMissingExecutableTitle", "Runtime do Codex não encontrado");
+    public string SetupMissingExecutableSummary => this.GetLocalizedString("SetupMissingExecutableSummary", "Nenhum executável compatível do Codex pôde ser resolvido a partir do caminho configurado ou do ambiente local.");
+    public string SetupMissingAuthTitle => this.GetLocalizedString("SetupMissingAuthTitle", "Codex disponível, mas sem autenticação OpenAI");
+    public string SetupMissingAuthSummary => this.GetLocalizedString("SetupMissingAuthSummary", "Faça login no Codex ou forneça um OPENAI_API_KEY antes de iniciar uma sessão.");
+    public string SetupMissingProviderAuthTitle => this.GetLocalizedString("SetupMissingProviderAuthTitle", "Faltam credenciais do provider do Codex");
+    public string SetupMissingProviderAuthSummary => this.GetLocalizedString("SetupMissingProviderAuthSummary", "O provider ativo está configurado no config.toml, mas as credenciais exigidas não estão disponíveis.");
+    public string SetupReadyTitle => this.GetLocalizedString("SetupReadyTitle", "Codex pronto para uso");
+    public string SetupReadySummary => this.GetLocalizedString("SetupReadySummary", "A extensão já consegue iniciar sessões usando o executável resolvido do Codex.");
+    public string SetupErrorTitle => this.GetLocalizedString("SetupErrorTitle", "A configuração do Codex precisa de atenção");
+    public string SetupErrorSummary => this.GetLocalizedString("SetupErrorSummary", "A extensão encontrou o Codex, mas não conseguiu validar o ambiente.");
+    public string SetupInstallButton => this.GetLocalizedString("SetupInstallButton", "Copiar comando de instalação");
+    public string SetupLoginButton => this.GetLocalizedString("SetupLoginButton", "Abrir login");
+    public string SetupRefreshButton => this.GetLocalizedString("SetupRefreshButton", "Atualizar status");
+    public string SetupSettingsButton => this.GetLocalizedString("SetupSettingsButton", "Abrir configurações");
+    public string SetupInstallHint => this.GetLocalizedString("SetupInstallHint", "Comando de instalação");
+    public string SetupExecutableHint => this.GetLocalizedString("SetupExecutableHint", "Executável");
+    public string SetupAuthHint => this.GetLocalizedString("SetupAuthHint", "Autenticação");
+    public string SetupVersionHint => this.GetLocalizedString("SetupVersionHint", "Versão");
+    public string SetupAuthFileLabel => this.GetLocalizedString("SetupAuthFileLabel", "Usando ~/.codex/auth.json");
+    public string SetupApiKeyLabel => this.GetLocalizedString("SetupApiKeyLabel", "Usando OPENAI_API_KEY");
+    public string SetupManagedLoginLabel => this.GetLocalizedString("SetupManagedLoginLabel", "Usando login do Codex");
+    public string SetupConfigProviderLabel => this.GetLocalizedString("SetupConfigProviderLabel", "Usando provider do config.toml");
+    public string SetupConfigProfileLabelFormat => this.GetLocalizedString("SetupConfigProfileLabelFormat", "Usando perfil {0} do config.toml");
+    public string SetupMissingAuthDetail => this.GetLocalizedString("SetupMissingAuthDetail", "Execute `codex login` ou configure uma API key da OpenAI.");
+    public string SetupMissingProviderAuthDetail => this.GetLocalizedString("SetupMissingProviderAuthDetail", "Atualize o config.toml ou defina a variável de ambiente do provider antes de iniciar uma sessão.");
+    public string SetupInstallDetail => this.GetLocalizedString("SetupInstallDetail", "Instalação recomendada: `npm install -g @openai/codex`");
+    public string LocalButton => this.Get("LocalButton");
+    public string RemoveAttachmentHoverLabel => this.Get("RemoveAttachmentHoverLabel");
+    public string ApprovalCommandTitle => this.Get("ApprovalCommandTitle");
+    public string ApprovalFileChangeTitle => this.Get("ApprovalFileChangeTitle");
+    public string UserInputTitle => this.Get("UserInputTitle");
+    public string ApprovalReasonLabel => this.Get("ApprovalReasonLabel");
+    public string ApprovalCommandLabel => this.Get("ApprovalCommandLabel");
+    public string ApprovalWorkingDirectoryLabel => this.Get("ApprovalWorkingDirectoryLabel");
+    public string ApprovalGrantRootLabel => this.Get("ApprovalGrantRootLabel");
+    public string ApprovalAccept => this.Get("ApprovalAccept");
+    public string ApprovalAcceptForSession => this.Get("ApprovalAcceptForSession");
+    public string ApprovalAcceptWithExecpolicyAmendment => this.Get("ApprovalAcceptWithExecpolicyAmendment");
+    public string ApprovalApplyNetworkPolicyAmendment => this.Get("ApprovalApplyNetworkPolicyAmendment");
+    public string ApprovalDecline => this.Get("ApprovalDecline");
+    public string ApprovalCancel => this.Get("ApprovalCancel");
+    public string AllFilesFilter => this.Get("AllFilesFilter");
+    public string CodexNoResponse => this.Get("CodexNoResponse");
+    public string ExecutionCanceled => this.Get("ExecutionCanceled");
+    public string ExecutionError => this.Get("ExecutionError");
+    public string ProcessingStatus => this.Get("ProcessingStatus");
+    public string ImagePasteErrorPrefix => this.Get("ImagePasteErrorPrefix");
+    public string LoadTopicsErrorPrefix => this.Get("LoadTopicsErrorPrefix");
+    public string LoadModelsErrorPrefix => this.Get("LoadModelsErrorPrefix");
+    public string DeleteHistoryTooltip => this.Get("DeleteHistoryTooltip");
+    public string CopyButton => this.Get("CopyButton");
+    public string SelectAllButton => this.Get("SelectAllButton");
+    public string MarkdownTextModeLabel => this.GetLocalizedString("MarkdownTextModeLabel", "Texto");
+    public string MarkdownRenderedModeLabel => this.GetLocalizedString("MarkdownRenderedModeLabel", "Renderizado");
+    public string RunningStatus => this.Get("RunningStatus");
+    public string ReadyStatus => this.Get("ReadyStatus");
+    public string ContextWindowDetailFormat => this.Get("ContextWindowDetailFormat");
+    public string IdeContextPrefix => this.Get("IdeContextPrefix");
+    public string MermaidDiagramLabel => this.Get("MermaidDiagramLabel");
+    public string MermaidCodeLabel => this.Get("MermaidCodeLabel");
+    public string MermaidLoadingPreview => this.Get("MermaidLoadingPreview");
+    public string MermaidInitFailed => this.Get("MermaidInitFailed");
+    public string MermaidLoadFailedFormat => this.Get("MermaidLoadFailedFormat");
+    public string MermaidRenderFailed => this.Get("MermaidRenderFailed");
+    public string MermaidRenderFailedFormat => this.Get("MermaidRenderFailedFormat");
+    public string MermaidFreezeFailed => this.Get("MermaidFreezeFailed");
+    public string MermaidLoadTimeout => this.Get("MermaidLoadTimeout");
+    public string MermaidPreviewFallback => this.Get("MermaidPreviewFallback");
+    public string MermaidPreviewScriptError => this.Get("MermaidPreviewScriptError");
+    public string ToolWindowErrorMessage => this.Get("ToolWindowErrorMessage");
+    public string SettingsToolWindowErrorMessage => this.Get("SettingsToolWindowErrorMessage");
+    public string OpenWindowFailedMessage => this.Get("OpenWindowFailedMessage");
+    public string ExecutionCanceledTag => this.Get("ExecutionCanceledTag");
+    public string ExecutionErrorTag => this.Get("ExecutionErrorTag");
+    public string ExtensionContextPrefix => this.Get("ExtensionContextPrefix");
+    public string PreferredMcpPrefix => this.Get("PreferredMcpPrefix");
+    public string IdeContextSolutionLabel => this.Get("IdeContextSolutionLabel");
+    public string IdeContextActiveDocumentLabel => this.Get("IdeContextActiveDocumentLabel");
+    public string IdeContextSelectedItemsLabel => this.Get("IdeContextSelectedItemsLabel");
+    public string IdeContextOpenFilesLabel => this.Get("IdeContextOpenFilesLabel");
+    public string IdeContextSelectionLabel => this.Get("IdeContextSelectionLabel");
+    public string InvalidSkillNameMessage => this.Get("InvalidSkillNameMessage");
+    public string SkillTemplateSummary => this.Get("SkillTemplateSummary");
+    public string SkillTemplateWhenToUseHeading => this.Get("SkillTemplateWhenToUseHeading");
+    public string SkillTemplateWhenToUseBullet => this.Get("SkillTemplateWhenToUseBullet");
+    public string SkillTemplateFlowHeading => this.Get("SkillTemplateFlowHeading");
+    public string SkillTemplateFlowStep1 => this.Get("SkillTemplateFlowStep1");
+    public string SkillTemplateFlowStep2 => this.Get("SkillTemplateFlowStep2");
+    public string SkillTemplateFlowStep3 => this.Get("SkillTemplateFlowStep3");
+    public string CodexDetectedLabel => this.Get("CodexDetectedLabel");
+    public string EventPlanTitle => this.Get("EventPlanTitle");
+    public string EventPlanUpdated => this.Get("EventPlanUpdated");
+    public string EventReasoningTitle => this.Get("EventReasoningTitle");
+    public string EventReasoningUpdated => this.Get("EventReasoningUpdated");
+    public string EventCommandTitle => this.Get("EventCommandTitle");
+    public string EventWorkingDirectoryLabel => this.Get("EventWorkingDirectoryLabel");
+    public string EventOutputLabel => this.Get("EventOutputLabel");
+    public string EventFileChangesTitle => this.Get("EventFileChangesTitle");
+    public string EventUpdatedFiles => this.Get("EventUpdatedFiles");
+    public string EventFileUpdated => this.Get("EventFileUpdated");
+    public string EventMcpToolTitle => this.Get("EventMcpToolTitle");
+    public string EventArgumentsLabel => this.Get("EventArgumentsLabel");
+    public string EventErrorLabel => this.Get("EventErrorLabel");
+    public string EventResultLabel => this.Get("EventResultLabel");
+    public string EventToolTitle => this.Get("EventToolTitle");
+    public string EventAgentToolTitle => this.Get("EventAgentToolTitle");
+    public string EventAgentToolUsed => this.Get("EventAgentToolUsed");
+    public string EventPromptLabel => this.Get("EventPromptLabel");
+    public string EventWebSearchTitle => this.Get("EventWebSearchTitle");
+    public string EventImageViewTitle => this.Get("EventImageViewTitle");
+    public string EventImageViewed => this.Get("EventImageViewed");
+    public string EventImageGenerationTitle => this.Get("EventImageGenerationTitle");
+    public string EventImageGenerated => this.Get("EventImageGenerated");
+    public string EventReviewModeTitle => this.Get("EventReviewModeTitle");
+    public string EventEnteredReviewMode => this.Get("EventEnteredReviewMode");
+    public string EventExitedReviewMode => this.Get("EventExitedReviewMode");
+    public string EventContextTitle => this.Get("EventContextTitle");
+    public string EventConversationContextCompacted => this.Get("EventConversationContextCompacted");
+    public string EventToolCall => this.Get("EventToolCall");
+    public string EventCommandExecuted => this.Get("EventCommandExecuted");
+    public string EventMoreFormat => this.Get("EventMoreFormat");
+    public string EventMoreFilesFormat => this.Get("EventMoreFilesFormat");
+    public string EventPendingStatus => this.GetLocalizedString("EventPendingStatus", "pendente");
+    public string EventInProgressStatus => this.GetLocalizedString("EventInProgressStatus", "em andamento");
+    public string EventCompletedStatus => this.Get("EventCompletedStatus");
+    public string EventFailedStatus => this.Get("EventFailedStatus");
+    public string ToolWindowXamlLoadLogMessage => this.Get("ToolWindowXamlLoadLogMessage");
+    public string ToolWindowViewModelCreateLogMessage => this.Get("ToolWindowViewModelCreateLogMessage");
+    public string SettingsToolWindowXamlLoadLogMessage => this.Get("SettingsToolWindowXamlLoadLogMessage");
+    public string SettingsToolWindowViewModelCreateLogMessage => this.Get("SettingsToolWindowViewModelCreateLogMessage");
+    public string ToolWindowInitializeLogMessage => this.Get("ToolWindowInitializeLogMessage");
+    public string SettingsToolWindowInitializeLogMessage => this.Get("SettingsToolWindowInitializeLogMessage");
+    public string SettingsToolWindowOpenLogMessage => this.Get("SettingsToolWindowOpenLogMessage");
+    public string ToolWindowOpenLogMessage => this.Get("ToolWindowOpenLogMessage");
+    public string AsyncPanelInitializeLogMessage => this.Get("AsyncPanelInitializeLogMessage");
+    public string StartTurnFailedMessage => this.Get("StartTurnFailedMessage");
+    public string AppServerValidationFailed => this.Get("AppServerValidationFailed");
+    public string AppServerUnsupported => this.Get("AppServerUnsupported");
+    public string AppServerClosedUnexpectedly => this.Get("AppServerClosedUnexpectedly");
+    public string AppServerRequestFailed => this.Get("AppServerRequestFailed");
+    public string AppServerUnavailable => this.Get("AppServerUnavailable");
+    public string EventCommentaryTitle => this.Get("EventCommentaryTitle");
+    public string EventMcpProgressTitle => this.Get("EventMcpProgressTitle");
+    public string OutputTagSetup => this.Get("OutputTagSetup");
+    public string OutputTagAuth => this.Get("OutputTagAuth");
+    public string OutputTagSkills => this.Get("OutputTagSkills");
+    public string OutputTagRemoteSkills => this.Get("OutputTagRemoteSkills");
+    public string OutputTagInit => this.Get("OutputTagInit");
+    public string OutputTagServer => this.Get("OutputTagServer");
+    public string OutputTagStderr => this.Get("OutputTagStderr");
+    public string OutputTagAppServer => this.Get("OutputTagAppServer");
+    public string OutputTagApproval => this.Get("OutputTagApproval");
+    public string OutputTagUserInput => this.Get("OutputTagUserInput");
+    public string ExitCodeLabel => this.Get("ExitCodeLabel");
+    public string ManagedMcpDefaultName => this.Get("ManagedMcpDefaultName");
+    public string ManagedMcpDefaultUrlName => this.Get("ManagedMcpDefaultUrlName");
+    public string MermaidBundleNotFoundFormat => this.Get("MermaidBundleNotFoundFormat");
 
     public SelectionOption[] CreateReasoningOptions()
     {
         return new[]
         {
-            new SelectionOption(Get("ReasoningMinimal"), "minimal"),
-            new SelectionOption(Get("ReasoningLow"), "low"),
-            new SelectionOption(Get("ReasoningMedium"), "medium"),
-            new SelectionOption(Get("ReasoningHigh"), "high"),
-            new SelectionOption(Get("ReasoningMax"), "xhigh")
+            new SelectionOption(this.Get("ReasoningMinimal"), "minimal"),
+            new SelectionOption(this.Get("ReasoningLow"), "low"),
+            new SelectionOption(this.Get("ReasoningMedium"), "medium"),
+            new SelectionOption(this.Get("ReasoningHigh"), "high"),
+            new SelectionOption(this.Get("ReasoningMax"), "xhigh")
         };
     }
 
@@ -1782,9 +1783,9 @@ public sealed class LocalizationService
     {
         return new[]
         {
-            new SelectionOption(Get("ReasoningLow"), "low"),
-            new SelectionOption(Get("ReasoningMedium"), "medium"),
-            new SelectionOption(Get("ReasoningHigh"), "high")
+            new SelectionOption(this.Get("ReasoningLow"), "low"),
+            new SelectionOption(this.Get("ReasoningMedium"), "medium"),
+            new SelectionOption(this.Get("ReasoningHigh"), "high")
         };
     }
 
@@ -1792,9 +1793,9 @@ public sealed class LocalizationService
     {
         return new[]
         {
-            new SelectionOption(GetLocalizedString("SpeedDefault", "Padrão"), string.Empty),
-            new SelectionOption(GetLocalizedString("SpeedFast", "Rápida"), "fast"),
-            new SelectionOption(GetLocalizedString("SpeedFlex", "Flex"), "flex")
+            new SelectionOption(this.GetLocalizedString("SpeedDefault", "Padrão"), string.Empty),
+            new SelectionOption(this.GetLocalizedString("SpeedFast", "Rápida"), "fast"),
+            new SelectionOption(this.GetLocalizedString("SpeedFlex", "Flex"), "flex")
         };
     }
 
@@ -1802,11 +1803,11 @@ public sealed class LocalizationService
     {
         return new[]
         {
-            new SelectionOption(Get("ApprovalDefault"), string.Empty),
-            new SelectionOption(Get("ApprovalRequest"), "on-request"),
-            new SelectionOption(Get("ApprovalFailure"), "on-failure"),
-            new SelectionOption(Get("ApprovalNever"), "never"),
-            new SelectionOption(Get("ApprovalUntrusted"), "untrusted")
+            new SelectionOption(this.Get("ApprovalDefault"), string.Empty),
+            new SelectionOption(this.Get("ApprovalRequest"), "on-request"),
+            new SelectionOption(this.Get("ApprovalFailure"), "on-failure"),
+            new SelectionOption(this.Get("ApprovalNever"), "never"),
+            new SelectionOption(this.Get("ApprovalUntrusted"), "untrusted")
         };
     }
 
@@ -1814,9 +1815,9 @@ public sealed class LocalizationService
     {
         return new[]
         {
-            new SelectionOption(Get("SandboxReadOnly"), "read-only"),
-            new SelectionOption(Get("SandboxWorkspace"), "workspace-write"),
-            new SelectionOption(Get("SandboxFullAccess"), "danger-full-access")
+            new SelectionOption(this.Get("SandboxReadOnly"), "read-only"),
+            new SelectionOption(this.Get("SandboxWorkspace"), "workspace-write"),
+            new SelectionOption(this.Get("SandboxFullAccess"), "danger-full-access")
         };
     }
 
@@ -1824,7 +1825,7 @@ public sealed class LocalizationService
     {
         return new[]
         {
-            new SelectionOption(LanguageAutoOption, string.Empty),
+            new SelectionOption(this.LanguageAutoOption, string.Empty),
             new SelectionOption("Português (Brasil)", "pt-BR"),
             new SelectionOption("English", "en"),
             new SelectionOption("Español", "es"),
@@ -1835,34 +1836,27 @@ public sealed class LocalizationService
 
     public string GetApprovalOptionLabel(string key)
     {
-        switch (key)
+        return key switch
         {
-            case "accept":
-                return ApprovalAccept;
-            case "acceptForSession":
-                return ApprovalAcceptForSession;
-            case "acceptWithExecpolicyAmendment":
-                return ApprovalAcceptWithExecpolicyAmendment;
-            case "applyNetworkPolicyAmendment":
-                return ApprovalApplyNetworkPolicyAmendment;
-            case "cancel":
-                return ApprovalCancel;
-            default:
-                return ApprovalDecline;
-        }
+            "accept" => this.ApprovalAccept,
+            "acceptForSession" => this.ApprovalAcceptForSession,
+            "acceptWithExecpolicyAmendment" => this.ApprovalAcceptWithExecpolicyAmendment,
+            "applyNetworkPolicyAmendment" => this.ApprovalApplyNetworkPolicyAmendment,
+            "cancel" => this.ApprovalCancel,
+            _ => this.ApprovalDecline,
+        };
     }
 
     private string Get(string key)
     {
-        string value;
-        return _strings.TryGetValue(key, out value) ? value : EnglishStrings[key];
+        return this._strings.TryGetValue(key, out string value) ? value : EnglishStrings[key];
     }
 
     private string GetLocalizedString(string key, string portugueseValue)
     {
-        return Culture.TwoLetterISOLanguageName == "pt"
+        return this.Culture.TwoLetterISOLanguageName == "pt"
             ? portugueseValue
-            : Get(key);
+            : this.Get(key);
     }
 
     private static CultureInfo ResolvePreferredCulture(string? languageOverride)
@@ -1893,35 +1887,25 @@ public sealed class LocalizationService
 
     private static CultureInfo ResolveSupportedCulture(CultureInfo culture)
     {
-        switch (culture.TwoLetterISOLanguageName)
+        return culture.TwoLetterISOLanguageName switch
         {
-            case "pt":
-                return new CultureInfo("pt-BR");
-            case "es":
-                return new CultureInfo("es");
-            case "fr":
-                return new CultureInfo("fr");
-            case "de":
-                return new CultureInfo("de");
-            default:
-                return new CultureInfo("en");
-        }
+            "pt" => new CultureInfo("pt-BR"),
+            "es" => new CultureInfo("es"),
+            "fr" => new CultureInfo("fr"),
+            "de" => new CultureInfo("de"),
+            _ => new CultureInfo("en"),
+        };
     }
 
     private static IReadOnlyDictionary<string, string> GetLanguageStrings(CultureInfo culture)
     {
-        switch (culture.TwoLetterISOLanguageName)
+        return culture.TwoLetterISOLanguageName switch
         {
-            case "pt":
-                return PortugueseStrings;
-            case "es":
-                return SpanishStrings;
-            case "fr":
-                return FrenchStrings;
-            case "de":
-                return GermanStrings;
-            default:
-                return EnglishStrings;
-        }
+            "pt" => PortugueseStrings,
+            "es" => SpanishStrings,
+            "fr" => FrenchStrings,
+            "de" => GermanStrings,
+            _ => EnglishStrings,
+        };
     }
 }

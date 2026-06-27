@@ -11,30 +11,30 @@ public sealed class ObservableRangeCollection<T> : ObservableCollection<T>
 
     public void ReplaceAll(IEnumerable<T> items)
     {
-        CheckReentrancy();
+        this.CheckReentrancy();
 
-        _suppressNotifications = true;
+        this._suppressNotifications = true;
         try
         {
-            Items.Clear();
-            foreach (var item in items)
+            this.Items.Clear();
+            foreach (T? item in items)
             {
-                Items.Add(item);
+                this.Items.Add(item);
             }
         }
         finally
         {
-            _suppressNotifications = false;
+            this._suppressNotifications = false;
         }
 
-        OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
-        OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
-        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        this.OnPropertyChanged(new PropertyChangedEventArgs(nameof(this.Count)));
+        this.OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+        this.OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
     protected override void OnCollectionChanged(NotifyCollectionChangedEventArgs e)
     {
-        if (!_suppressNotifications)
+        if (!this._suppressNotifications)
         {
             base.OnCollectionChanged(e);
         }
@@ -42,7 +42,7 @@ public sealed class ObservableRangeCollection<T> : ObservableCollection<T>
 
     protected override void OnPropertyChanged(PropertyChangedEventArgs e)
     {
-        if (!_suppressNotifications)
+        if (!this._suppressNotifications)
         {
             base.OnPropertyChanged(e);
         }

@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
+
 using CodexVsix.Services;
+
 using Microsoft.VisualStudio.Shell;
 
 namespace CodexVsix;
@@ -18,12 +20,12 @@ internal static class CodexToolWindowManager
 
     public static void ShowSettingsToolWindow(string section)
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(() => ShowSettingsToolWindowAsync(section));
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(() => ShowSettingsToolWindowAsync(section));
     }
 
     private static async Task ShowSettingsToolWindowAsync(string section)
     {
-        var package = _package;
+        AsyncPackage? package = _package;
         if (package is null)
         {
             return;
@@ -34,7 +36,7 @@ internal static class CodexToolWindowManager
         try
         {
             CodexViewModelHost.GetOrCreate().EnsureExternalSettingsSection(section);
-            var window = await package.ShowToolWindowAsync(typeof(CodexSettingsToolWindow), 0, true, package.DisposalToken);
+            ToolWindowPane window = await package.ShowToolWindowAsync(typeof(CodexSettingsToolWindow), 0, true, package.DisposalToken);
             if (window?.Frame is null)
             {
                 throw new NotSupportedException(new LocalizationService().SettingsToolWindowErrorMessage);
@@ -45,13 +47,13 @@ internal static class CodexToolWindowManager
         }
         catch (Exception ex)
         {
-            ActivityLog.TryLogError("CodexVsix", new LocalizationService().SettingsToolWindowOpenLogMessage + Environment.NewLine + ex);
+            _ = ActivityLog.TryLogError("CodexVsix", new LocalizationService().SettingsToolWindowOpenLogMessage + Environment.NewLine + ex);
         }
     }
 
     public static void RefreshSettingsToolWindowCaption(Services.LocalizationService localization)
     {
-        ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             if (_settingsWindow is not null)

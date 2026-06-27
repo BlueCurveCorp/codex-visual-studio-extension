@@ -8,7 +8,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+
 using CodexVsix.Models;
+
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -44,7 +46,7 @@ public sealed class CodexProcessService : IDisposable
     private readonly SemaphoreSlim _executionGate = new(1, 1);
     private readonly object _syncRoot = new();
     private readonly object _writeLock = new();
-    private readonly Dictionary<long, TaskCompletionSource<JToken?>> _pendingRequests = new();
+    private readonly Dictionary<long, TaskCompletionSource<JToken?>> _pendingRequests = [];
     private readonly Dictionary<string, string> _skillsByName = new(StringComparer.OrdinalIgnoreCase);
 
     private Process? _serverProcess;
@@ -69,9 +71,9 @@ public sealed class CodexProcessService : IDisposable
     {
         get
         {
-            lock (_syncRoot)
+            lock (this._syncRoot)
             {
-                return _threadId;
+                return this._threadId;
             }
         }
     }
@@ -87,28 +89,28 @@ public sealed class CodexProcessService : IDisposable
         Action<long, long?>? onTokenUsage,
         CancellationToken cancellationToken)
     {
-        await _executionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await this._executionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
-            var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-            await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
-            await EnsureThreadReadyAsync(settings, workingDirectory, settings.CurrentThreadId, cancellationToken).ConfigureAwait(false);
-            await RefreshSkillsAsync(workingDirectory, cancellationToken).ConfigureAwait(false);
+            string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+            await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+            await this.EnsureThreadReadyAsync(settings, workingDirectory, settings.CurrentThreadId, cancellationToken).ConfigureAwait(false);
+            await this.RefreshSkillsAsync(workingDirectory, cancellationToken).ConfigureAwait(false);
 
-            var turnState = new ActiveTurnState(onOutput, onError, onEventMessage, onTokenUsage);
-            lock (_syncRoot)
+            ActiveTurnState turnState = new(onOutput, onError, onEventMessage, onTokenUsage);
+            lock (this._syncRoot)
             {
-                _activeTurn = turnState;
+                this._activeTurn = turnState;
             }
 
-            using (cancellationToken.Register(() => _ = InterruptActiveTurnAsync()))
+            using (cancellationToken.Register(() => _ = this.InterruptActiveTurnAsync()))
             {
                 try
                 {
-                    var turnResult = await StartTurnWithFallbackAsync(
+                    JToken? turnResult = await this.StartTurnWithFallbackAsync(
                         turnState,
-                        _threadId!,
+                        this._threadId!,
                         prompt,
                         settings,
                         workingDirectory,
@@ -117,17 +119,17 @@ public sealed class CodexProcessService : IDisposable
                         cancellationToken).ConfigureAwait(false);
 
                     turnState.TurnId = turnResult?["turn"]?["id"]?.Value<string>();
-                    var exitCode = await turnState.Completion.Task.ConfigureAwait(false);
+                    int exitCode = await turnState.Completion.Task.ConfigureAwait(false);
                     cancellationToken.ThrowIfCancellationRequested();
                     return exitCode;
                 }
                 finally
                 {
-                    lock (_syncRoot)
+                    lock (this._syncRoot)
                     {
-                        if (ReferenceEquals(_activeTurn, turnState))
+                        if (ReferenceEquals(this._activeTurn, turnState))
                         {
-                            _activeTurn = null;
+                            this._activeTurn = null;
                         }
                     }
                 }
@@ -135,60 +137,60 @@ public sealed class CodexProcessService : IDisposable
         }
         finally
         {
-            _executionGate.Release();
+            _ = this._executionGate.Release();
         }
     }
 
     public void Dispose()
     {
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _activeTurn?.TrySetResult(1);
-            _activeTurn = null;
+            this._activeTurn?.TrySetResult(1);
+            this._activeTurn = null;
         }
 
-        RestartServer(clearConfig: true);
-        _executionGate.Dispose();
+        this.RestartServer(clearConfig: true);
+        this._executionGate.Dispose();
     }
 
     public void ResetThread()
     {
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _threadId = null;
-            _threadConfigKey = null;
-            _threadLoaded = false;
+            this._threadId = null;
+            this._threadConfigKey = null;
+            this._threadLoaded = false;
         }
     }
 
     public void CancelActiveTurn()
     {
         ActiveTurnState? turnState;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
+            turnState = this._activeTurn;
         }
 
         turnState?.TrySetResult(1);
-        RestartServer(clearConfig: false);
+        this.RestartServer(clearConfig: false);
     }
 
     public async Task<IReadOnlyList<CodexThreadSummary>> ListThreadsAsync(CodexExtensionSettings settings, CancellationToken cancellationToken)
     {
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var currentThreadId = CurrentThreadId ?? settings.CurrentThreadId;
-        var items = await RequestThreadListItemsAsync(workingDirectory, cancellationToken).ConfigureAwait(false);
-        var threads = new List<CodexThreadSummary>();
+        string currentThreadId = this.CurrentThreadId ?? settings.CurrentThreadId;
+        JArray? items = await this.RequestThreadListItemsAsync(workingDirectory, cancellationToken).ConfigureAwait(false);
+        List<CodexThreadSummary> threads = [];
         if (items is null)
         {
             return threads;
         }
 
-        foreach (var item in items)
+        foreach (JToken item in items)
         {
-            var summary = ParseThreadSummary(item, currentThreadId);
+            CodexThreadSummary? summary = ParseThreadSummary(item, currentThreadId);
             if (summary is not null)
             {
                 threads.Add(summary);
@@ -200,23 +202,23 @@ public sealed class CodexProcessService : IDisposable
 
     private async Task<JArray?> RequestThreadListItemsAsync(string workingDirectory, CancellationToken cancellationToken)
     {
-        foreach (var candidate in GetThreadListWorkingDirectoryCandidates(workingDirectory))
+        foreach (string candidate in GetThreadListWorkingDirectoryCandidates(workingDirectory))
         {
-            var items = await SendThreadListRequestAsync(candidate, 200, cancellationToken).ConfigureAwait(false);
+            JArray? items = await this.SendThreadListRequestAsync(candidate, 200, cancellationToken).ConfigureAwait(false);
             if (items is { Count: > 0 })
             {
                 return items;
             }
         }
 
-        var allItems = await SendThreadListRequestAsync(null, 500, cancellationToken).ConfigureAwait(false);
+        JArray? allItems = await this.SendThreadListRequestAsync(null, 500, cancellationToken).ConfigureAwait(false);
         if (allItems is null || allItems.Count == 0)
         {
             return allItems;
         }
 
-        var filteredItems = new JArray();
-        foreach (var item in allItems)
+        JArray filteredItems = [];
+        foreach (JToken item in allItems)
         {
             if (ThreadMatchesWorkingDirectory(item, workingDirectory))
             {
@@ -229,7 +231,7 @@ public sealed class CodexProcessService : IDisposable
 
     private async Task<JArray?> SendThreadListRequestAsync(string? workingDirectory, int limit, CancellationToken cancellationToken)
     {
-        var parameters = new JObject
+        JObject parameters = new()
         {
             ["limit"] = limit,
             ["archived"] = false,
@@ -241,13 +243,13 @@ public sealed class CodexProcessService : IDisposable
             parameters["cwd"] = workingDirectory;
         }
 
-        var response = await SendRequestAsync("thread/list", parameters, cancellationToken).ConfigureAwait(false);
+        JToken? response = await this.SendRequestAsync("thread/list", parameters, cancellationToken).ConfigureAwait(false);
         return response?["data"] as JArray;
     }
 
     private static IEnumerable<string> GetThreadListWorkingDirectoryCandidates(string workingDirectory)
     {
-        var normalized = NormalizeComparablePath(workingDirectory);
+        string normalized = NormalizeComparablePath(workingDirectory);
         if (string.IsNullOrWhiteSpace(normalized))
         {
             yield break;
@@ -255,7 +257,7 @@ public sealed class CodexProcessService : IDisposable
 
         yield return normalized;
 
-        var devicePath = ToWindowsDevicePath(normalized);
+        string devicePath = ToWindowsDevicePath(normalized);
         if (!string.IsNullOrWhiteSpace(devicePath) && !string.Equals(devicePath, normalized, StringComparison.OrdinalIgnoreCase))
         {
             yield return devicePath;
@@ -264,8 +266,8 @@ public sealed class CodexProcessService : IDisposable
 
     private static bool ThreadMatchesWorkingDirectory(JToken item, string workingDirectory)
     {
-        var threadWorkingDirectory = NormalizeComparablePath(item?["cwd"]?.Value<string>());
-        var normalizedWorkingDirectory = NormalizeComparablePath(workingDirectory);
+        string threadWorkingDirectory = NormalizeComparablePath(item?["cwd"]?.Value<string>());
+        string normalizedWorkingDirectory = NormalizeComparablePath(workingDirectory);
         return !string.IsNullOrWhiteSpace(threadWorkingDirectory)
             && !string.IsNullOrWhiteSpace(normalizedWorkingDirectory)
             && string.Equals(threadWorkingDirectory, normalizedWorkingDirectory, StringComparison.OrdinalIgnoreCase);
@@ -278,22 +280,22 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var resumed = await SendRequestAsync(
+        JToken? resumed = await this.SendRequestAsync(
             "thread/resume",
             BuildThreadResumeParams(threadId, settings, workingDirectory),
             cancellationToken).ConfigureAwait(false);
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _threadId = resumed?["thread"]?["id"]?.Value<string>() ?? threadId;
-            _threadConfigKey = BuildThreadConfigKey(settings, workingDirectory);
-            _threadLoaded = true;
+            this._threadId = resumed?["thread"]?["id"]?.Value<string>() ?? threadId;
+            this._threadConfigKey = BuildThreadConfigKey(settings, workingDirectory);
+            this._threadLoaded = true;
         }
 
-        var readResponse = await SendRequestAsync(
+        JToken? readResponse = await this.SendRequestAsync(
             "thread/read",
             new
             {
@@ -302,14 +304,14 @@ public sealed class CodexProcessService : IDisposable
             },
             cancellationToken).ConfigureAwait(false);
 
-        var thread = readResponse?["thread"] ?? resumed?["thread"];
+        JToken? thread = readResponse?["thread"] ?? resumed?["thread"];
         if (thread is null)
         {
             return null;
         }
 
-        var summary = ParseThreadSummary(thread, threadId) ?? new CodexThreadSummary { ThreadId = threadId };
-        var sessionPath = thread["path"]?.Value<string>() ?? FindSessionPathForThread(summary.ThreadId);
+        CodexThreadSummary summary = ParseThreadSummary(thread, threadId) ?? new CodexThreadSummary { ThreadId = threadId };
+        string? sessionPath = thread["path"]?.Value<string>() ?? FindSessionPathForThread(summary.ThreadId);
         return new CodexThreadConversation
         {
             Thread = summary,
@@ -319,31 +321,30 @@ public sealed class CodexProcessService : IDisposable
 
     public async Task<IReadOnlyList<SelectionOption>> ListModelsAsync(CodexExtensionSettings settings, CancellationToken cancellationToken, bool includeHidden = false)
     {
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var response = await SendRequestAsync("model/list", new { }, cancellationToken).ConfigureAwait(false);
-        var items = response?["data"] as JArray;
-        var models = new List<SelectionOption>();
-        if (items is null)
+        JToken? response = await this.SendRequestAsync("model/list", new { }, cancellationToken).ConfigureAwait(false);
+        List<SelectionOption> models = [];
+        if (response?["data"] is not JArray items)
         {
             return models;
         }
 
-        foreach (var item in items)
+        foreach (JToken? item in items)
         {
             if (!includeHidden && item?["hidden"]?.Value<bool>() == true)
             {
                 continue;
             }
 
-            var value = item?["model"]?.Value<string>();
+            string? value = item?["model"]?.Value<string>();
             if (string.IsNullOrWhiteSpace(value))
             {
                 continue;
             }
 
-            var label = item?["displayName"]?.Value<string>();
+            string? label = item?["displayName"]?.Value<string>();
             models.Add(new SelectionOption(string.IsNullOrWhiteSpace(label) ? value! : label!, value!));
         }
 
@@ -357,9 +358,9 @@ public sealed class CodexProcessService : IDisposable
             return;
         }
 
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
-        await SendRequestAsync(
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        _ = await this.SendRequestAsync(
             "thread/name/set",
             new
             {
@@ -376,9 +377,9 @@ public sealed class CodexProcessService : IDisposable
             return;
         }
 
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
-        await SendRequestAsync(
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        _ = await this.SendRequestAsync(
             "thread/archive",
             new
             {
@@ -386,48 +387,47 @@ public sealed class CodexProcessService : IDisposable
             },
             cancellationToken).ConfigureAwait(false);
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            if (string.Equals(_threadId, threadId, StringComparison.Ordinal))
+            if (string.Equals(this._threadId, threadId, StringComparison.Ordinal))
             {
-                _threadId = null;
-                _threadConfigKey = null;
-                _threadLoaded = false;
+                this._threadId = null;
+                this._threadConfigKey = null;
+                this._threadLoaded = false;
             }
         }
     }
 
     public async Task<IReadOnlyList<CodexAppSummary>> ListAppsAsync(CodexExtensionSettings settings, CancellationToken cancellationToken)
     {
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var response = await SendRequestAsync(
+        JToken? response = await this.SendRequestAsync(
             "app/list",
             new
             {
                 limit = 20,
                 forceRefetch = false,
-                threadId = CurrentThreadId
+                threadId = this.CurrentThreadId
             },
             cancellationToken).ConfigureAwait(false);
 
-        var apps = new List<CodexAppSummary>();
-        var items = response?["data"] as JArray;
-        if (items is null)
+        List<CodexAppSummary> apps = [];
+        if (response?["data"] is not JArray items)
         {
             return apps;
         }
 
-        foreach (var item in items)
+        foreach (JToken? item in items)
         {
-            var name = item?["name"]?.Value<string>();
+            string? name = item?["name"]?.Value<string>();
             if (string.IsNullOrWhiteSpace(name))
             {
                 continue;
             }
 
-            var description = item?["description"]?.Value<string>();
+            string? description = item?["description"]?.Value<string>();
             apps.Add(new CodexAppSummary
             {
                 Name = name!,
@@ -440,10 +440,10 @@ public sealed class CodexProcessService : IDisposable
 
     public async Task<IReadOnlyList<CodexMcpServerSummary>> ListMcpServersAsync(CodexExtensionSettings settings, CancellationToken cancellationToken)
     {
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var response = await SendRequestAsync(
+        JToken? response = await this.SendRequestAsync(
             "mcpServerStatus/list",
             new
             {
@@ -451,23 +451,22 @@ public sealed class CodexProcessService : IDisposable
             },
             cancellationToken).ConfigureAwait(false);
 
-        var servers = new List<CodexMcpServerSummary>();
-        var items = response?["data"] as JArray;
-        if (items is null)
+        List<CodexMcpServerSummary> servers = [];
+        if (response?["data"] is not JArray items)
         {
             return servers;
         }
 
-        foreach (var item in items)
+        foreach (JToken? item in items)
         {
-            var name = item?["name"]?.Value<string>();
+            string? name = item?["name"]?.Value<string>();
             if (string.IsNullOrWhiteSpace(name))
             {
                 continue;
             }
 
-            var tools = item?["tools"]?.Children<JProperty>().Select(property => property.Name).Take(4).ToArray() ?? new string[0];
-            var toolsLabel = tools.Length == 0 ? string.Empty : string.Join(", ", tools);
+            string[] tools = item?["tools"]?.Children<JProperty>().Select(property => property.Name).Take(4).ToArray() ?? new string[0];
+            string toolsLabel = tools.Length == 0 ? string.Empty : string.Join(", ", tools);
             servers.Add(new CodexMcpServerSummary
             {
                 Name = name!,
@@ -481,43 +480,41 @@ public sealed class CodexProcessService : IDisposable
 
     public async Task<IReadOnlyList<CodexSkillSummary>> ListSkillsAsync(CodexExtensionSettings settings, CancellationToken cancellationToken, bool forceReload = false)
     {
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var response = await SendRequestAsync(
+        JToken? response = await this.SendRequestAsync(
             "skills/list",
             new { cwds = new[] { workingDirectory }, forceReload },
             cancellationToken).ConfigureAwait(false);
 
-        var homeSkillsDirectory = Path.Combine(
+        string homeSkillsDirectory = Path.Combine(
             CodexEnvironmentPathHelper.GetCodexHomeDirectory(settings.EnvironmentVariables),
             "skills");
 
-        var summaries = new List<CodexSkillSummary>();
-        var entries = response?["data"] as JArray;
-        if (entries is null)
+        List<CodexSkillSummary> summaries = [];
+        if (response?["data"] is not JArray entries)
         {
             return summaries;
         }
 
-        foreach (var entry in entries)
+        foreach (JToken entry in entries)
         {
-            var skills = entry["skills"] as JArray;
-            if (skills is null)
+            if (entry["skills"] is not JArray skills)
             {
                 continue;
             }
 
-            foreach (var skill in skills)
+            foreach (JToken skill in skills)
             {
-                var name = skill["name"]?.Value<string>();
-                var path = skill["path"]?.Value<string>();
+                string? name = skill["name"]?.Value<string>();
+                string? path = skill["path"]?.Value<string>();
                 if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(path))
                 {
                     continue;
                 }
 
-                var isSystem = path.IndexOf(".system", StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isSystem = path.IndexOf(".system", StringComparison.OrdinalIgnoreCase) >= 0;
                 summaries.Add(new CodexSkillSummary
                 {
                     Name = name!,
@@ -542,10 +539,10 @@ public sealed class CodexProcessService : IDisposable
 
     public async Task<IReadOnlyList<CodexRemoteSkillSummary>> ListRemoteSkillsAsync(CodexExtensionSettings settings, CancellationToken cancellationToken)
     {
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var response = await SendRequestAsync(
+        JToken? response = await this.SendRequestAsync(
             "skills/remote/list",
             new
             {
@@ -555,17 +552,16 @@ public sealed class CodexProcessService : IDisposable
             },
             cancellationToken).ConfigureAwait(false);
 
-        var items = response?["data"] as JArray;
-        var summaries = new List<CodexRemoteSkillSummary>();
-        if (items is null)
+        List<CodexRemoteSkillSummary> summaries = [];
+        if (response?["data"] is not JArray items)
         {
             return summaries;
         }
 
-        foreach (var item in items)
+        foreach (JToken? item in items)
         {
-            var id = item?["id"]?.Value<string>();
-            var name = item?["name"]?.Value<string>();
+            string? id = item?["id"]?.Value<string>();
+            string? name = item?["name"]?.Value<string>();
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name))
             {
                 continue;
@@ -591,10 +587,10 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var response = await SendRequestAsync(
+        JToken? response = await this.SendRequestAsync(
             "skills/remote/export",
             new
             {
@@ -612,10 +608,10 @@ public sealed class CodexProcessService : IDisposable
             return enabled;
         }
 
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var response = await SendRequestAsync(
+        JToken? response = await this.SendRequestAsync(
             "skills/config/write",
             new
             {
@@ -629,68 +625,68 @@ public sealed class CodexProcessService : IDisposable
 
     public async Task<CodexRateLimitSummary> GetAccountRateLimitsAsync(CodexExtensionSettings settings, CancellationToken cancellationToken)
     {
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
-        await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
 
-        var response = await SendRequestAsync("account/rateLimits/read", new { }, cancellationToken).ConfigureAwait(false);
-        return BuildRateLimitSummary(response);
+        JToken? response = await this.SendRequestAsync("account/rateLimits/read", new { }, cancellationToken).ConfigureAwait(false);
+        return this.BuildRateLimitSummary(response);
     }
 
     public void InvalidateSkillsCache()
     {
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _skillsCacheKey = null;
-            _skillsByName.Clear();
+            this._skillsCacheKey = null;
+            this._skillsByName.Clear();
         }
     }
 
     private async Task EnsureServerReadyAsync(CodexExtensionSettings settings, string workingDirectory, CancellationToken cancellationToken)
     {
-        _languageOverride = settings.LanguageOverride;
-        var desiredServerConfig = BuildServerConfigKey(settings);
-        var shouldStart = false;
-        var needsRestart = false;
+        this._languageOverride = settings.LanguageOverride;
+        string desiredServerConfig = BuildServerConfigKey(settings);
+        bool shouldStart = false;
+        bool needsRestart = false;
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            if (_serverProcess is null || _serverProcess.HasExited || !string.Equals(_serverConfigKey, desiredServerConfig, StringComparison.Ordinal))
+            if (this._serverProcess is null || this._serverProcess.HasExited || !string.Equals(this._serverConfigKey, desiredServerConfig, StringComparison.Ordinal))
             {
                 shouldStart = true;
                 needsRestart = true;
-                _serverConfigKey = desiredServerConfig;
-                _initializedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                this._serverConfigKey = desiredServerConfig;
+                this._initializedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             }
         }
 
         if (needsRestart)
         {
-            RestartServer(clearConfig: false);
-            lock (_syncRoot)
+            this.RestartServer(clearConfig: false);
+            lock (this._syncRoot)
             {
-                _serverConfigKey = desiredServerConfig;
-                _initializedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                this._serverConfigKey = desiredServerConfig;
+                this._initializedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             }
             shouldStart = true;
         }
 
         if (shouldStart)
         {
-            StartServerProcess(settings, workingDirectory);
-            await InitializeServerAsync(cancellationToken).ConfigureAwait(false);
+            this.StartServerProcess(settings, workingDirectory);
+            await this.InitializeServerAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        var initTask = _initializedTcs?.Task;
+        Task<bool>? initTask = this._initializedTcs?.Task;
         if (initTask is not null)
         {
-            await initTask.ConfigureAwait(false);
+            _ = await initTask.ConfigureAwait(false);
         }
     }
 
     private async Task InitializeServerAsync(CancellationToken cancellationToken)
     {
-        await SendRequestAsync(
+        _ = await this.SendRequestAsync(
             "initialize",
             new
             {
@@ -699,124 +695,123 @@ public sealed class CodexProcessService : IDisposable
             },
             cancellationToken).ConfigureAwait(false);
 
-        await SendNotificationAsync("initialized", new { }).ConfigureAwait(false);
+        await this.SendNotificationAsync("initialized", new { }).ConfigureAwait(false);
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _initializedTcs?.TrySetResult(true);
+            _ = (this._initializedTcs?.TrySetResult(true));
         }
     }
 
     private async Task EnsureThreadReadyAsync(CodexExtensionSettings settings, string workingDirectory, string? requestedThreadId, CancellationToken cancellationToken)
     {
-        var desiredThreadConfig = BuildThreadConfigKey(settings, workingDirectory);
+        string desiredThreadConfig = BuildThreadConfigKey(settings, workingDirectory);
         if (!string.IsNullOrWhiteSpace(requestedThreadId))
         {
-            if (string.Equals(CurrentThreadId, requestedThreadId, StringComparison.Ordinal) && _threadLoaded && string.Equals(_threadConfigKey, desiredThreadConfig, StringComparison.Ordinal))
+            if (string.Equals(this.CurrentThreadId, requestedThreadId, StringComparison.Ordinal) && this._threadLoaded && string.Equals(this._threadConfigKey, desiredThreadConfig, StringComparison.Ordinal))
             {
                 return;
             }
 
-            var resumed = await SendRequestAsync(
+            JToken? resumed = await this.SendRequestAsync(
                 "thread/resume",
                 BuildThreadResumeParams(requestedThreadId, settings, workingDirectory),
                 cancellationToken).ConfigureAwait(false);
 
-            lock (_syncRoot)
+            lock (this._syncRoot)
             {
-                _threadId = resumed?["thread"]?["id"]?.Value<string>() ?? requestedThreadId;
-                _threadConfigKey = desiredThreadConfig;
-                _threadLoaded = true;
+                this._threadId = resumed?["thread"]?["id"]?.Value<string>() ?? requestedThreadId;
+                this._threadConfigKey = desiredThreadConfig;
+                this._threadLoaded = true;
             }
 
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(_threadId) && _threadLoaded && string.Equals(_threadConfigKey, desiredThreadConfig, StringComparison.Ordinal))
+        if (!string.IsNullOrWhiteSpace(this._threadId) && this._threadLoaded && string.Equals(this._threadConfigKey, desiredThreadConfig, StringComparison.Ordinal))
         {
             return;
         }
 
-        var result = await SendRequestAsync(
+        JToken? result = await this.SendRequestAsync(
             "thread/start",
-            BuildThreadStartParams(settings, workingDirectory),
+            this.BuildThreadStartParams(settings, workingDirectory),
             cancellationToken).ConfigureAwait(false);
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _threadId = result?["thread"]?["id"]?.Value<string>();
-            _threadConfigKey = desiredThreadConfig;
-            _threadLoaded = true;
+            this._threadId = result?["thread"]?["id"]?.Value<string>();
+            this._threadConfigKey = desiredThreadConfig;
+            this._threadLoaded = true;
         }
     }
 
     private async Task RefreshSkillsAsync(string workingDirectory, CancellationToken cancellationToken)
     {
-        if (string.Equals(_skillsCacheKey, workingDirectory, StringComparison.OrdinalIgnoreCase) && _skillsByName.Count > 0)
+        if (string.Equals(this._skillsCacheKey, workingDirectory, StringComparison.OrdinalIgnoreCase) && this._skillsByName.Count > 0)
         {
             return;
         }
 
         try
         {
-            var response = await SendRequestAsync(
+            JToken? response = await this.SendRequestAsync(
                 "skills/list",
                 new { cwds = new[] { workingDirectory }, forceReload = false },
                 cancellationToken).ConfigureAwait(false);
 
-            var entries = response?["data"] as JArray;
-            lock (_syncRoot)
+            JArray? entries = response?["data"] as JArray;
+            lock (this._syncRoot)
             {
-                _skillsByName.Clear();
+                this._skillsByName.Clear();
 
                 if (entries is not null)
                 {
-                    foreach (var entry in entries)
+                    foreach (JToken entry in entries)
                     {
-                        var skills = entry["skills"] as JArray;
-                        if (skills is null)
+                        if (entry["skills"] is not JArray skills)
                         {
                             continue;
                         }
 
-                        foreach (var skill in skills)
+                        foreach (JToken skill in skills)
                         {
-                            var enabled = skill["enabled"]?.Value<bool>() ?? true;
-                            var name = skill["name"]?.Value<string>();
-                            var path = skill["path"]?.Value<string>();
+                            bool enabled = skill["enabled"]?.Value<bool>() ?? true;
+                            string? name = skill["name"]?.Value<string>();
+                            string? path = skill["path"]?.Value<string>();
                             if (enabled && !string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(path))
                             {
-                                _skillsByName[name!] = path!;
+                                this._skillsByName[name!] = path!;
                             }
                         }
                     }
                 }
 
-                _skillsCacheKey = workingDirectory;
+                this._skillsCacheKey = workingDirectory;
             }
         }
         catch
         {
-            lock (_syncRoot)
+            lock (this._syncRoot)
             {
-                _skillsByName.Clear();
-                _skillsCacheKey = workingDirectory;
+                this._skillsByName.Clear();
+                this._skillsCacheKey = workingDirectory;
             }
         }
     }
 
     private void StartServerProcess(CodexExtensionSettings settings, string workingDirectory)
     {
-        var executablePath = CodexExecutableResolver.ResolveExecutableLocation(settings.CodexExecutablePath, settings.EnvironmentVariables);
+        string executablePath = CodexExecutableResolver.ResolveExecutableLocation(settings.CodexExecutablePath, settings.EnvironmentVariables);
         if (string.IsNullOrWhiteSpace(executablePath))
         {
             executablePath = CodexExecutableResolver.NormalizeConfiguredExecutablePath(settings.CodexExecutablePath);
         }
 
-        var arguments = BuildServerArguments(settings);
-        var startInfo = BuildStartInfo(executablePath, arguments, workingDirectory);
+        string arguments = BuildServerArguments(settings);
+        ProcessStartInfo startInfo = BuildStartInfo(executablePath, arguments, workingDirectory);
 
-        var psi = new ProcessStartInfo
+        ProcessStartInfo psi = new()
         {
             FileName = startInfo.FileName,
             WorkingDirectory = startInfo.WorkingDirectory,
@@ -832,24 +827,24 @@ public sealed class CodexProcessService : IDisposable
 
         ApplyEnvironmentVariables(psi, settings.EnvironmentVariables);
 
-        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        process.Start();
-        process.Exited += (_, _) => FailPendingOperations(GetLocalization().AppServerClosedUnexpectedly);
+        Process process = new() { StartInfo = psi, EnableRaisingEvents = true };
+        _ = process.Start();
+        process.Exited += (_, _) => this.FailPendingOperations(this.GetLocalization().AppServerClosedUnexpectedly);
 
-        var serverInput = new StreamWriter(process.StandardInput.BaseStream, new UTF8Encoding(false), 1024, true)
+        StreamWriter serverInput = new(process.StandardInput.BaseStream, new UTF8Encoding(false), 1024, true)
         {
             AutoFlush = true,
             NewLine = "\n"
         };
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _serverProcess = process;
-            _serverInput = serverInput;
+            this._serverProcess = process;
+            this._serverInput = serverInput;
         }
 
-        _ = Task.Run(() => ReadStdoutLoopAsync(process));
-        _ = Task.Run(() => ReadStderrLoopAsync(process));
+        _ = Task.Run(() => this.ReadStdoutLoopAsync(process));
+        _ = Task.Run(() => this.ReadStderrLoopAsync(process));
     }
 
     private async Task ReadStdoutLoopAsync(Process process)
@@ -858,7 +853,7 @@ public sealed class CodexProcessService : IDisposable
         {
             while (!process.StandardOutput.EndOfStream)
             {
-                var line = await process.StandardOutput.ReadLineAsync().ConfigureAwait(false);
+                string line = await process.StandardOutput.ReadLineAsync().ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(line))
                 {
                     continue;
@@ -866,17 +861,17 @@ public sealed class CodexProcessService : IDisposable
 
                 try
                 {
-                    HandleServerMessage(line);
+                    this.HandleServerMessage(line);
                 }
                 catch (Exception ex)
                 {
-                    PublishError("[" + GetLocalization().OutputTagAppServer + "] " + ex.Message + Environment.NewLine);
+                    this.PublishError("[" + this.GetLocalization().OutputTagAppServer + "] " + ex.Message + Environment.NewLine);
                 }
             }
         }
         catch (Exception ex)
         {
-            FailPendingOperations(ex.Message);
+            this.FailPendingOperations(ex.Message);
         }
     }
 
@@ -886,16 +881,16 @@ public sealed class CodexProcessService : IDisposable
         {
             while (!process.StandardError.EndOfStream)
             {
-                var line = await process.StandardError.ReadLineAsync().ConfigureAwait(false);
+                string? line = await process.StandardError.ReadLineAsync().ConfigureAwait(false);
                 if (line is not null)
                 {
-                    PublishError(line + Environment.NewLine);
+                    this.PublishError(line + Environment.NewLine);
                 }
             }
         }
         catch (Exception ex)
         {
-            PublishError("[" + GetLocalization().OutputTagStderr + "] " + ex.Message + Environment.NewLine);
+            this.PublishError("[" + this.GetLocalization().OutputTagStderr + "] " + ex.Message + Environment.NewLine);
         }
     }
 
@@ -908,41 +903,41 @@ public sealed class CodexProcessService : IDisposable
         }
         catch
         {
-            PublishError("[" + GetLocalization().OutputTagAppServer + "] " + rawMessage + Environment.NewLine);
+            this.PublishError("[" + this.GetLocalization().OutputTagAppServer + "] " + rawMessage + Environment.NewLine);
             return;
         }
 
         if (parsedMessage is not JObject message)
         {
-            PublishError("[" + GetLocalization().OutputTagAppServer + "] " + rawMessage + Environment.NewLine);
+            this.PublishError("[" + this.GetLocalization().OutputTagAppServer + "] " + rawMessage + Environment.NewLine);
             return;
         }
 
         if (message["id"] is not null && (message["result"] is not null || message["error"] is not null) && message["method"] is null)
         {
-            ResolvePendingRequest(message);
+            this.ResolvePendingRequest(message);
             return;
         }
 
         if (message["id"] is not null && message["method"] is not null)
         {
-            _ = HandleServerRequestAsync(message);
+            _ = this.HandleServerRequestAsync(message);
             return;
         }
 
-        HandleNotification(message);
+        this.HandleNotification(message);
     }
 
     private void ResolvePendingRequest(JObject message)
     {
-        var id = message["id"]?.Value<long>() ?? 0L;
+        long id = message["id"]?.Value<long>() ?? 0L;
         TaskCompletionSource<JToken?>? tcs;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _pendingRequests.TryGetValue(id, out tcs);
+            _ = this._pendingRequests.TryGetValue(id, out tcs);
             if (tcs is not null)
             {
-                _pendingRequests.Remove(id);
+                _ = this._pendingRequests.Remove(id);
             }
         }
 
@@ -953,27 +948,27 @@ public sealed class CodexProcessService : IDisposable
 
         if (message["error"] is not null)
         {
-            var errorMessage = GetNestedString(message["error"], "message")
+            string errorMessage = GetNestedString(message["error"], "message")
                 ?? message["error"]?.Value<string>()
-                ?? GetLocalization().AppServerRequestFailed;
-            tcs.TrySetException(new InvalidOperationException(errorMessage));
+                ?? this.GetLocalization().AppServerRequestFailed;
+            _ = tcs.TrySetException(new InvalidOperationException(errorMessage));
             return;
         }
 
-        tcs.TrySetResult(message["result"]);
+        _ = tcs.TrySetResult(message["result"]);
     }
 
     private async Task HandleServerRequestAsync(JObject message)
     {
-        var id = message["id"];
-        var method = message["method"]?.Value<string>() ?? string.Empty;
-        var parameters = message["params"] as JObject;
+        JToken? id = message["id"];
+        string method = message["method"]?.Value<string>() ?? string.Empty;
+        JObject? parameters = message["params"] as JObject;
         if (string.Equals(method, "item/commandExecution/requestApproval", StringComparison.Ordinal) ||
             string.Equals(method, "item/fileChange/requestApproval", StringComparison.Ordinal))
         {
-            var approvalRequest = BuildApprovalRequest(method, parameters);
-            var decision = await ResolveApprovalDecisionAsync(approvalRequest).ConfigureAwait(false);
-            await SendResponseAsync(
+            CodexApprovalRequest approvalRequest = this.BuildApprovalRequest(method, parameters);
+            JToken decision = await this.ResolveApprovalDecisionAsync(approvalRequest).ConfigureAwait(false);
+            await this.SendResponseAsync(
                 id,
                 new JObject
                 {
@@ -984,64 +979,64 @@ public sealed class CodexProcessService : IDisposable
 
         if (string.Equals(method, "item/tool/requestUserInput", StringComparison.Ordinal))
         {
-            var userInputRequest = BuildUserInputRequest(parameters);
-            var response = await ResolveUserInputRequestAsync(userInputRequest).ConfigureAwait(false);
-            await SendResponseAsync(id, response ?? new JObject { ["answers"] = new JObject() }).ConfigureAwait(false);
+            CodexUserInputRequest userInputRequest = BuildUserInputRequest(parameters);
+            JObject? response = await this.ResolveUserInputRequestAsync(userInputRequest).ConfigureAwait(false);
+            await this.SendResponseAsync(id, response ?? new JObject { ["answers"] = new JObject() }).ConfigureAwait(false);
             return;
         }
 
-        await SendResponseAsync(id, new JObject()).ConfigureAwait(false);
+        await this.SendResponseAsync(id, []).ConfigureAwait(false);
     }
 
     private void HandleNotification(JObject message)
     {
-        var method = message["method"]?.Value<string>() ?? string.Empty;
-        var parameters = message["params"] as JObject;
+        string method = message["method"]?.Value<string>() ?? string.Empty;
+        JObject? parameters = message["params"] as JObject;
 
         switch (method)
         {
             case "turn/started":
-                HandleTurnStarted(parameters);
+                this.HandleTurnStarted(parameters);
                 break;
 
             case "item/agentMessage/delta":
-                HandleAgentMessageDelta(parameters);
+                this.HandleAgentMessageDelta(parameters);
                 break;
 
             case "item/plan/delta":
-                HandlePlanDelta(parameters);
+                this.HandlePlanDelta(parameters);
                 break;
 
             case "item/completed":
-                HandleCompletedItem(parameters);
+                this.HandleCompletedItem(parameters);
                 break;
 
             case "turn/plan/updated":
-                HandleTurnPlanUpdated(parameters);
+                this.HandleTurnPlanUpdated(parameters);
                 break;
 
             case "turn/completed":
-                HandleTurnCompleted(parameters);
+                this.HandleTurnCompleted(parameters);
                 break;
 
             case "codex/event/agent_message":
-                HandleAgentMessageEvent(parameters);
+                this.HandleAgentMessageEvent(parameters);
                 break;
 
             case "codex/event/task_complete":
-                HandleTaskCompleteEvent(parameters);
+                this.HandleTaskCompleteEvent(parameters);
                 break;
 
             case "codex/event/token_count":
-                HandleTokenCountEvent(parameters);
+                this.HandleTokenCountEvent(parameters);
                 break;
 
             case "thread/tokenUsage/updated":
-                HandleTokenUsageUpdated(parameters);
+                this.HandleTokenUsageUpdated(parameters);
                 break;
 
             case "item/mcpToolCall/progress":
-                HandleMcpToolCallProgress(parameters);
+                this.HandleMcpToolCallProgress(parameters);
                 break;
 
             case "thread/started":
@@ -1051,11 +1046,11 @@ public sealed class CodexProcessService : IDisposable
             case "thread/name/updated":
             case "thread/status/changed":
             case "thread/closed/updated":
-                NotifyThreadCatalogChanged();
+                this.NotifyThreadCatalogChanged();
                 break;
 
             case "account/rateLimits/updated":
-                PublishRateLimitsUpdate(parameters);
+                this.PublishRateLimitsUpdate(parameters);
                 break;
 
             case "account/updated":
@@ -1063,18 +1058,18 @@ public sealed class CodexProcessService : IDisposable
                 break;
 
             case "skills/changed":
-                lock (_syncRoot)
+                lock (this._syncRoot)
                 {
-                    _skillsCacheKey = null;
+                    this._skillsCacheKey = null;
                 }
                 break;
 
             case "error":
-                var errorMessage = GetNestedString(parameters?["error"], "message")
+                string? errorMessage = GetNestedString(parameters?["error"], "message")
                     ?? parameters?["error"]?.Value<string>();
                 if (!string.IsNullOrWhiteSpace(errorMessage))
                 {
-                    PublishError(errorMessage + Environment.NewLine);
+                    this.PublishError(errorMessage + Environment.NewLine);
                 }
                 break;
         }
@@ -1082,38 +1077,38 @@ public sealed class CodexProcessService : IDisposable
 
     private void HandleTurnStarted(JToken? parameters)
     {
-        var turnId = parameters?["turn"]?["id"]?.Value<string>();
+        string? turnId = parameters?["turn"]?["id"]?.Value<string>();
         if (string.IsNullOrWhiteSpace(turnId))
         {
             return;
         }
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            if (_activeTurn is not null && string.IsNullOrWhiteSpace(_activeTurn.TurnId))
+            if (this._activeTurn is not null && string.IsNullOrWhiteSpace(this._activeTurn.TurnId))
             {
-                _activeTurn.TurnId = turnId;
+                this._activeTurn.TurnId = turnId;
             }
         }
     }
 
     private void HandleAgentMessageDelta(JToken? parameters)
     {
-        if (!MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
+        if (!this.MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
         {
             return;
         }
 
-        var itemId = parameters?["itemId"]?.Value<string>();
-        var delta = parameters?["delta"]?.Value<string>();
+        string? itemId = parameters?["itemId"]?.Value<string>();
+        string? delta = parameters?["delta"]?.Value<string>();
 
         ActiveTurnState? turnState;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
+            turnState = this._activeTurn;
             if (turnState is not null && !string.IsNullOrWhiteSpace(itemId))
             {
-                turnState.StreamedItemIds.Add(itemId!);
+                _ = turnState.StreamedItemIds.Add(itemId!);
             }
         }
 
@@ -1126,24 +1121,24 @@ public sealed class CodexProcessService : IDisposable
 
     private void HandlePlanDelta(JToken? parameters)
     {
-        if (!MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
+        if (!this.MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
         {
             return;
         }
 
-        var delta = parameters?["delta"]?.Value<string>();
+        string? delta = parameters?["delta"]?.Value<string>();
         if (string.IsNullOrWhiteSpace(delta))
         {
             return;
         }
 
-        var itemId = parameters?["itemId"]?.Value<string>();
+        string? itemId = parameters?["itemId"]?.Value<string>();
         string accumulatedPlan;
 
         ActiveTurnState? turnState;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
+            turnState = this._activeTurn;
             if (turnState is null)
             {
                 return;
@@ -1157,15 +1152,15 @@ public sealed class CodexProcessService : IDisposable
 
     private void HandleAgentMessageEvent(JToken? parameters)
     {
-        if (!MatchesActiveTurnEvent(parameters))
+        if (!this.MatchesActiveTurnEvent(parameters))
         {
             return;
         }
 
         ActiveTurnState? turnState;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
+            turnState = this._activeTurn;
         }
 
         if (turnState is null)
@@ -1173,17 +1168,17 @@ public sealed class CodexProcessService : IDisposable
             return;
         }
 
-        var payload = parameters?["msg"];
-        var message = payload?["message"]?.Value<string>();
+        JToken? payload = parameters?["msg"];
+        string? message = payload?["message"]?.Value<string>();
         if (string.IsNullOrWhiteSpace(message))
         {
             return;
         }
 
-        var phase = payload?["phase"]?.Value<string>();
+        string? phase = payload?["phase"]?.Value<string>();
         if (string.Equals(phase, "commentary", StringComparison.OrdinalIgnoreCase))
         {
-            turnState.OnEventMessage?.Invoke(new ChatMessage(false, message.Trim(), isEvent: true, title: GetLocalization().EventCommentaryTitle));
+            turnState.OnEventMessage?.Invoke(new ChatMessage(false, message.Trim(), isEvent: true, title: this.GetLocalization().EventCommentaryTitle));
             return;
         }
 
@@ -1192,15 +1187,15 @@ public sealed class CodexProcessService : IDisposable
 
     private void HandleTurnPlanUpdated(JToken? parameters)
     {
-        if (!MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
+        if (!this.MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
         {
             return;
         }
 
         ActiveTurnState? turnState;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
+            turnState = this._activeTurn;
         }
 
         if (turnState is null)
@@ -1208,16 +1203,16 @@ public sealed class CodexProcessService : IDisposable
             return;
         }
 
-        var planMarkdown = BuildStructuredPlanMarkdown(
+        string? planMarkdown = BuildStructuredPlanMarkdown(
             parameters?["explanation"]?.Value<string>(),
             parameters?["plan"] as JArray,
-            GetLocalization());
+            this.GetLocalization());
         if (string.IsNullOrWhiteSpace(planMarkdown))
         {
             return;
         }
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
             turnState.SetPlanText(null, planMarkdown);
         }
@@ -1227,15 +1222,15 @@ public sealed class CodexProcessService : IDisposable
 
     private void HandleTaskCompleteEvent(JToken? parameters)
     {
-        if (!MatchesActiveTurnEvent(parameters))
+        if (!this.MatchesActiveTurnEvent(parameters))
         {
             return;
         }
 
         ActiveTurnState? turnState;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
+            turnState = this._activeTurn;
         }
 
         if (turnState is null)
@@ -1243,66 +1238,66 @@ public sealed class CodexProcessService : IDisposable
             return;
         }
 
-        var lastAgentMessage = parameters?["msg"]?["last_agent_message"]?.Value<string>();
+        string? lastAgentMessage = parameters?["msg"]?["last_agent_message"]?.Value<string>();
         PublishAssistantOutput(turnState, lastAgentMessage, skipIfAlreadyPublished: true);
     }
 
     private void HandleTokenCountEvent(JToken? parameters)
     {
-        if (!MatchesActiveTurnEvent(parameters))
+        if (!this.MatchesActiveTurnEvent(parameters))
         {
             return;
         }
 
-        var info = parameters?["msg"]?["info"];
-        var tokensInContextWindow = GetNestedToken(info, "last_token_usage", "total_tokens")?.Value<long?>()
+        JToken? info = parameters?["msg"]?["info"];
+        long tokensInContextWindow = GetNestedToken(info, "last_token_usage", "total_tokens")?.Value<long?>()
             ?? GetNestedToken(info, "lastTokenUsage", "totalTokens")?.Value<long?>()
             ?? GetNestedToken(info, "total_token_usage", "total_tokens")?.Value<long?>()
             ?? GetNestedToken(info, "totalTokenUsage", "totalTokens")?.Value<long?>()
             ?? 0L;
-        var contextWindow = GetNestedToken(info, "model_context_window")?.Value<long?>()
+        long? contextWindow = GetNestedToken(info, "model_context_window")?.Value<long?>()
             ?? GetNestedToken(info, "modelContextWindow")?.Value<long?>();
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _activeTurn?.OnTokenUsage?.Invoke(tokensInContextWindow, contextWindow);
+            this._activeTurn?.OnTokenUsage?.Invoke(tokensInContextWindow, contextWindow);
         }
     }
 
     private void HandleMcpToolCallProgress(JToken? parameters)
     {
-        if (!MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
+        if (!this.MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
         {
             return;
         }
 
         ActiveTurnState? turnState;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
+            turnState = this._activeTurn;
         }
 
-        var message = parameters?["message"]?.Value<string>();
+        string? message = parameters?["message"]?.Value<string>();
         if (!string.IsNullOrWhiteSpace(message))
         {
-            turnState?.OnEventMessage?.Invoke(new ChatMessage(false, message.Trim(), isEvent: true, title: GetLocalization().EventMcpProgressTitle));
+            turnState?.OnEventMessage?.Invoke(new ChatMessage(false, message.Trim(), isEvent: true, title: this.GetLocalization().EventMcpProgressTitle));
         }
     }
 
     private void HandleCompletedItem(JToken? parameters)
     {
-        if (!MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
+        if (!this.MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
         {
             return;
         }
 
-        var item = parameters?["item"];
-        var itemType = item?["type"]?.Value<string>();
+        JToken? item = parameters?["item"];
+        string? itemType = item?["type"]?.Value<string>();
 
         ActiveTurnState? turnState;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
+            turnState = this._activeTurn;
         }
 
         if (turnState is null)
@@ -1312,9 +1307,9 @@ public sealed class CodexProcessService : IDisposable
 
         if (string.Equals(itemType, "plan", StringComparison.OrdinalIgnoreCase))
         {
-            var itemId = item?["id"]?.Value<string>();
+            string? itemId = item?["id"]?.Value<string>();
             string? planText;
-            lock (_syncRoot)
+            lock (this._syncRoot)
             {
                 planText = turnState.GetPlanText(itemId);
             }
@@ -1330,7 +1325,7 @@ public sealed class CodexProcessService : IDisposable
 
         if (!string.Equals(itemType, "agentMessage", StringComparison.OrdinalIgnoreCase))
         {
-            var eventMessage = BuildThreadEventMessage(item);
+            ChatMessage? eventMessage = BuildThreadEventMessage(item);
             if (eventMessage is not null && eventMessage.IsEvent)
             {
                 turnState.OnEventMessage?.Invoke(eventMessage);
@@ -1339,13 +1334,13 @@ public sealed class CodexProcessService : IDisposable
             return;
         }
 
-        var agentItemId = item?["id"]?.Value<string>();
+        string? agentItemId = item?["id"]?.Value<string>();
         if (!string.IsNullOrWhiteSpace(agentItemId) && turnState.StreamedItemIds.Contains(agentItemId!))
         {
             return;
         }
 
-        var text = item?["text"]?.Value<string>();
+        string? text = item?["text"]?.Value<string>();
         if (string.IsNullOrWhiteSpace(text))
         {
             text = ExtractText(item?["content"]);
@@ -1359,64 +1354,64 @@ public sealed class CodexProcessService : IDisposable
 
     private void HandleTurnCompleted(JToken? parameters)
     {
-        if (!MatchesActiveTurn(parameters?["turn"]?["id"]?.Value<string>()))
+        if (!this.MatchesActiveTurn(parameters?["turn"]?["id"]?.Value<string>()))
         {
             return;
         }
 
-        var status = parameters?["turn"]?["status"]?.Value<string>();
-        var errorMessage = GetNestedString(parameters?["turn"], "error", "message");
+        string? status = parameters?["turn"]?["status"]?.Value<string>();
+        string? errorMessage = GetNestedString(parameters?["turn"], "error", "message");
         if (!string.IsNullOrWhiteSpace(errorMessage))
         {
-            PublishError(errorMessage + Environment.NewLine);
+            this.PublishError(errorMessage + Environment.NewLine);
         }
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _activeTurn?.TrySetResult(string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase) ? 0 : 1);
+            this._activeTurn?.TrySetResult(string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase) ? 0 : 1);
         }
     }
 
     private void HandleTokenUsageUpdated(JToken? parameters)
     {
-        if (!MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
+        if (!this.MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
         {
             return;
         }
 
-        var tokenUsage = parameters?["tokenUsage"];
-        var tokensInContextWindow = GetNestedToken(tokenUsage, "last", "totalTokens")?.Value<long?>()
+        JToken? tokenUsage = parameters?["tokenUsage"];
+        long tokensInContextWindow = GetNestedToken(tokenUsage, "last", "totalTokens")?.Value<long?>()
             ?? GetNestedToken(tokenUsage, "lastTokenUsage", "totalTokens")?.Value<long?>()
             ?? GetNestedToken(tokenUsage, "last_token_usage", "total_tokens")?.Value<long?>()
             ?? GetNestedToken(tokenUsage, "total", "totalTokens")?.Value<long?>()
             ?? GetNestedToken(tokenUsage, "totalTokenUsage", "totalTokens")?.Value<long?>()
             ?? GetNestedToken(tokenUsage, "total_token_usage", "total_tokens")?.Value<long?>()
             ?? 0L;
-        var contextWindow = GetNestedToken(parameters?["tokenUsage"], "modelContextWindow")?.Value<long?>();
+        long? contextWindow = GetNestedToken(parameters?["tokenUsage"], "modelContextWindow")?.Value<long?>();
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _activeTurn?.OnTokenUsage?.Invoke(tokensInContextWindow, contextWindow);
+            this._activeTurn?.OnTokenUsage?.Invoke(tokensInContextWindow, contextWindow);
         }
     }
 
     private bool MatchesActiveTurn(string? turnId)
     {
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            return _activeTurn is not null && (string.IsNullOrWhiteSpace(_activeTurn.TurnId) || string.Equals(_activeTurn.TurnId, turnId, StringComparison.Ordinal));
+            return this._activeTurn is not null && (string.IsNullOrWhiteSpace(this._activeTurn.TurnId) || string.Equals(this._activeTurn.TurnId, turnId, StringComparison.Ordinal));
         }
     }
 
     private bool MatchesActiveTurnEvent(JToken? parameters)
     {
-        var turnId = parameters?["id"]?.Value<string>();
+        string? turnId = parameters?["id"]?.Value<string>();
         if (string.IsNullOrWhiteSpace(turnId))
         {
             turnId = parameters?["msg"]?["turn_id"]?.Value<string>();
         }
 
-        return MatchesActiveTurn(turnId);
+        return this.MatchesActiveTurn(turnId);
     }
 
     private static void PublishAssistantOutput(ActiveTurnState turnState, string? text, bool skipIfAlreadyPublished)
@@ -1439,10 +1434,10 @@ public sealed class CodexProcessService : IDisposable
     {
         ActiveTurnState? turnState;
         string? threadId;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
-            threadId = _threadId;
+            turnState = this._activeTurn;
+            threadId = this._threadId;
         }
 
         if (turnState is null || string.IsNullOrWhiteSpace(turnState.TurnId) || string.IsNullOrWhiteSpace(threadId) || turnState.InterruptRequested)
@@ -1454,7 +1449,7 @@ public sealed class CodexProcessService : IDisposable
 
         try
         {
-            await SendRequestAsync(
+            _ = await this.SendRequestAsync(
                 "turn/interrupt",
                 new { threadId, turnId = turnState.TurnId },
                 CancellationToken.None).ConfigureAwait(false);
@@ -1466,29 +1461,29 @@ public sealed class CodexProcessService : IDisposable
 
     private Task<JToken?> SendRequestAsync(string method, object parameters, CancellationToken cancellationToken)
     {
-        var id = Interlocked.Increment(ref _nextRequestId);
-        var tcs = new TaskCompletionSource<JToken?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        long id = Interlocked.Increment(ref this._nextRequestId);
+        TaskCompletionSource<JToken?> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            _pendingRequests[id] = tcs;
+            this._pendingRequests[id] = tcs;
         }
 
         if (cancellationToken.CanBeCanceled)
         {
-            cancellationToken.Register(() =>
+            _ = cancellationToken.Register(() =>
             {
-                lock (_syncRoot)
+                lock (this._syncRoot)
                 {
-                    if (_pendingRequests.Remove(id))
+                    if (this._pendingRequests.Remove(id))
                     {
-                        tcs.TrySetCanceled(cancellationToken);
+                        _ = tcs.TrySetCanceled(cancellationToken);
                     }
                 }
             });
         }
 
-        WriteMessage(new JObject
+        this.WriteMessage(new JObject
         {
             ["id"] = id,
             ["method"] = method,
@@ -1500,7 +1495,7 @@ public sealed class CodexProcessService : IDisposable
 
     private Task SendNotificationAsync(string method, object parameters)
     {
-        WriteMessage(new JObject
+        this.WriteMessage(new JObject
         {
             ["method"] = method,
             ["params"] = parameters is JObject notificationParams ? notificationParams : JObject.FromObject(parameters)
@@ -1511,7 +1506,7 @@ public sealed class CodexProcessService : IDisposable
 
     private Task SendResponseAsync(JToken? id, JObject result)
     {
-        WriteMessage(new JObject
+        this.WriteMessage(new JObject
         {
             ["id"] = id,
             ["result"] = result
@@ -1523,18 +1518,18 @@ public sealed class CodexProcessService : IDisposable
     private void WriteMessage(JObject message)
     {
         StreamWriter? writer;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            writer = _serverInput;
+            writer = this._serverInput;
         }
 
         if (writer is null)
         {
-            throw new InvalidOperationException(GetLocalization().AppServerUnavailable);
+            throw new InvalidOperationException(this.GetLocalization().AppServerUnavailable);
         }
 
-        var json = message.ToString(Formatting.None);
-        lock (_writeLock)
+        string json = message.ToString(Formatting.None);
+        lock (this._writeLock)
         {
             writer.WriteLine(json);
             writer.Flush();
@@ -1557,7 +1552,7 @@ public sealed class CodexProcessService : IDisposable
 
     private object BuildTurnStartParams(string threadId, string prompt, CodexExtensionSettings settings, string workingDirectory, IEnumerable<string> imagePaths, string ideContextSummary)
     {
-        return BuildTurnStartParams(threadId, prompt, settings, workingDirectory, imagePaths, ideContextSummary, includeExecutionOverrides: true, includeCollaborationMode: true, includeVerbosity: true);
+        return this.BuildTurnStartParams(threadId, prompt, settings, workingDirectory, imagePaths, ideContextSummary, includeExecutionOverrides: true, includeCollaborationMode: true, includeVerbosity: true);
     }
 
     private JObject BuildTurnStartParams(
@@ -1571,8 +1566,8 @@ public sealed class CodexProcessService : IDisposable
         bool includeCollaborationMode,
         bool includeVerbosity)
     {
-        var input = BuildUserInput(prompt, settings, workingDirectory, imagePaths, ideContextSummary);
-        var result = new JObject
+        object[] input = this.BuildUserInput(prompt, settings, workingDirectory, imagePaths, ideContextSummary);
+        JObject result = new()
         {
             ["threadId"] = threadId,
             ["cwd"] = workingDirectory,
@@ -1613,22 +1608,21 @@ public sealed class CodexProcessService : IDisposable
         string ideContextSummary,
         CancellationToken cancellationToken)
     {
-        var attempts = new List<(string Label, bool IncludeExecutionOverrides, bool IncludeCollaborationMode, bool IncludeVerbosity)>
-        {
+        List<(string Label, bool IncludeExecutionOverrides, bool IncludeCollaborationMode, bool IncludeVerbosity)> attempts =
+        [
             ("full", true, true, true),
             ("no-verbosity", true, true, false),
-            ("no-collaboration-mode", true, false, false)
-        };
-
-        attempts.Add(("minimal", false, false, false));
+            ("no-collaboration-mode", true, false, false),
+            ("minimal", false, false, false)
+        ];
 
         Exception? lastError = null;
-        for (var index = 0; index < attempts.Count; index++)
+        for (int index = 0; index < attempts.Count; index++)
         {
-            var attempt = attempts[index];
+            (string Label, bool IncludeExecutionOverrides, bool IncludeCollaborationMode, bool IncludeVerbosity) attempt = attempts[index];
             try
             {
-                var requestParams = BuildTurnStartParams(
+                JObject requestParams = this.BuildTurnStartParams(
                     threadId,
                     prompt,
                     settings,
@@ -1638,7 +1632,7 @@ public sealed class CodexProcessService : IDisposable
                     attempt.IncludeExecutionOverrides,
                     attempt.IncludeCollaborationMode,
                     attempt.IncludeVerbosity);
-                return await SendRequestAsync("turn/start", requestParams, cancellationToken).ConfigureAwait(false);
+                return await this.SendRequestAsync("turn/start", requestParams, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1646,10 +1640,10 @@ public sealed class CodexProcessService : IDisposable
                 if (index < attempts.Count - 1)
                 {
                     turnState.OnError("[turn/start fallback:" + attempt.Label + "] " + ex.Message + Environment.NewLine);
-                    RestartServer(clearConfig: false);
-                    await EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
-                    await EnsureThreadReadyAsync(settings, workingDirectory, settings.CurrentThreadId, cancellationToken).ConfigureAwait(false);
-                    threadId = _threadId ?? settings.CurrentThreadId ?? threadId;
+                    this.RestartServer(clearConfig: false);
+                    await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+                    await this.EnsureThreadReadyAsync(settings, workingDirectory, settings.CurrentThreadId, cancellationToken).ConfigureAwait(false);
+                    threadId = this._threadId ?? settings.CurrentThreadId ?? threadId;
                 }
             }
         }
@@ -1679,7 +1673,7 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        var modeSettings = new JObject
+        JObject modeSettings = new()
         {
             ["model"] = settings.DefaultModel
         };
@@ -1709,36 +1703,31 @@ public sealed class CodexProcessService : IDisposable
 
     private static object BuildSandboxPolicy(string sandboxMode)
     {
-        switch (NormalizeSandboxMode(sandboxMode))
+        return NormalizeSandboxMode(sandboxMode) switch
         {
-            case "read-only":
-                return new
-                {
-                    type = "readOnly",
-                    networkAccess = false
-                };
-
-            case "workspace-write":
-                return new
-                {
-                    type = "workspaceWrite",
-                    networkAccess = false
-                };
-
-            default:
-                return new
-                {
-                    type = "dangerFullAccess"
-                };
-        }
+            "read-only" => new
+            {
+                type = "readOnly",
+                networkAccess = false
+            },
+            "workspace-write" => new
+            {
+                type = "workspaceWrite",
+                networkAccess = false
+            },
+            _ => new
+            {
+                type = "dangerFullAccess"
+            },
+        };
     }
 
     private object[] BuildUserInput(string prompt, CodexExtensionSettings settings, string workingDirectory, IEnumerable<string> imagePaths, string ideContextSummary)
     {
-        var localization = new LocalizationService(settings.LanguageOverride);
-        var inputs = new List<object>();
+        LocalizationService localization = new(settings.LanguageOverride);
+        List<object> inputs = [];
 
-        var baseContext = localization.ExtensionContextPrefix + Path.GetFullPath(workingDirectory) + "\".";
+        string baseContext = localization.ExtensionContextPrefix + Path.GetFullPath(workingDirectory) + "\".";
         inputs.Add(new
         {
             type = "text",
@@ -1754,7 +1743,7 @@ public sealed class CodexProcessService : IDisposable
             });
         }
 
-        var preferredMcpContext = BuildPreferredMcpContext(settings, localization);
+        string preferredMcpContext = BuildPreferredMcpContext(settings, localization);
         if (!string.IsNullOrWhiteSpace(preferredMcpContext))
         {
             inputs.Add(new
@@ -1770,17 +1759,17 @@ public sealed class CodexProcessService : IDisposable
             text = prompt
         });
 
-        foreach (var mention in ExtractMentionInputs(prompt, workingDirectory))
+        foreach (object mention in this.ExtractMentionInputs(prompt, workingDirectory))
         {
             inputs.Add(mention);
         }
 
-        foreach (var skill in ExtractSkillInputs(prompt))
+        foreach (object skill in this.ExtractSkillInputs(prompt))
         {
             inputs.Add(skill);
         }
 
-        foreach (var imagePath in imagePaths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string? imagePath in imagePaths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             inputs.Add(new
             {
@@ -1794,7 +1783,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string BuildPreferredMcpContext(CodexExtensionSettings settings, LocalizationService localization)
     {
-        var preferredServers = settings.PreferredMcpServers?
+        string[]? preferredServers = settings.PreferredMcpServers?
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -1806,18 +1795,18 @@ public sealed class CodexProcessService : IDisposable
 
     private void PublishRateLimitsUpdate(JObject? parameters)
     {
-        RateLimitsUpdated?.Invoke(BuildRateLimitSummary(parameters));
+        RateLimitsUpdated?.Invoke(this.BuildRateLimitSummary(parameters));
     }
 
     private CodexRateLimitSummary BuildRateLimitSummary(JToken? response)
     {
-        var snapshots = ResolveRateLimitSnapshots(response);
+        IReadOnlyList<JObject> snapshots = ResolveRateLimitSnapshots(response);
         if (snapshots.Count == 0)
         {
             return new CodexRateLimitSummary();
         }
 
-        var localization = new LocalizationService(_languageOverride);
+        LocalizationService localization = new(this._languageOverride);
 
         return new CodexRateLimitSummary
         {
@@ -1827,8 +1816,8 @@ public sealed class CodexProcessService : IDisposable
 
     private static IReadOnlyList<JObject> ResolveRateLimitSnapshots(JToken? response)
     {
-        var snapshots = new List<JObject>();
-        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        List<JObject> snapshots = [];
+        HashSet<string> seenKeys = new(StringComparer.OrdinalIgnoreCase);
 
         AppendRateLimitSnapshotsFromMap(snapshots, seenKeys, response?["rateLimitsByLimitId"]);
         AppendRateLimitSnapshotsFromMap(snapshots, seenKeys, response?["rate_limits_by_limit_id"]);
@@ -1851,7 +1840,7 @@ public sealed class CodexProcessService : IDisposable
             return;
         }
 
-        foreach (var property in snapshotMap.Properties())
+        foreach (JProperty property in snapshotMap.Properties())
         {
             AddRateLimitSnapshot(snapshots, seenKeys, property.Value, property.Name);
         }
@@ -1864,7 +1853,7 @@ public sealed class CodexProcessService : IDisposable
             return;
         }
 
-        var identity = ReadString(snapshot, "limitId", "limit_id", "limitName", "limit_name")
+        string identity = ReadString(snapshot, "limitId", "limit_id", "limitName", "limit_name")
             ?? fallbackKey
             ?? snapshot.ToString(Formatting.None);
 
@@ -1898,14 +1887,14 @@ public sealed class CodexProcessService : IDisposable
         IReadOnlyList<JObject> snapshots,
         LocalizationService localization)
     {
-        var entries = new List<CodexRateLimitWindowSummary>();
+        List<CodexRateLimitWindowSummary> entries = [];
 
-        foreach (var snapshot in snapshots
+        foreach (JObject? snapshot in snapshots
                      .OrderBy(GetRateLimitSortPriority)
                      .ThenBy(GetRateLimitDisplayName, StringComparer.CurrentCultureIgnoreCase))
         {
-            var limitDisplayName = GetRateLimitDisplayName(snapshot);
-            var primary = BuildRateLimitWindowEntry(
+            string limitDisplayName = GetRateLimitDisplayName(snapshot);
+            CodexRateLimitWindowSummary primary = BuildRateLimitWindowEntry(
                 limitDisplayName,
                 ResolveRateLimitWindow(snapshot, "primary", "primaryWindow", "primary_window", "short"),
                 localization);
@@ -1914,7 +1903,7 @@ public sealed class CodexProcessService : IDisposable
                 entries.Add(primary);
             }
 
-            var secondary = BuildRateLimitWindowEntry(
+            CodexRateLimitWindowSummary secondary = BuildRateLimitWindowEntry(
                 limitDisplayName,
                 ResolveRateLimitWindow(snapshot, "secondary", "secondaryWindow", "secondary_window", "long"),
                 localization);
@@ -1924,20 +1913,20 @@ public sealed class CodexProcessService : IDisposable
             }
         }
 
-        var planSnapshot = snapshots.FirstOrDefault(snapshot => !string.IsNullOrWhiteSpace(ReadString(snapshot, "planType", "plan_type", "plan", "tier")));
+        JObject? planSnapshot = snapshots.FirstOrDefault(snapshot => !string.IsNullOrWhiteSpace(ReadString(snapshot, "planType", "plan_type", "plan", "tier")));
         if (planSnapshot is not null)
         {
-            var planEntry = BuildPlanEntry(planSnapshot, localization);
+            CodexRateLimitWindowSummary planEntry = BuildPlanEntry(planSnapshot, localization);
             if (planEntry.HasData)
             {
                 entries.Add(planEntry);
             }
         }
 
-        var creditsSnapshot = snapshots.FirstOrDefault(snapshot => ResolveCreditsToken(snapshot) is not null);
+        JObject? creditsSnapshot = snapshots.FirstOrDefault(snapshot => ResolveCreditsToken(snapshot) is not null);
         if (creditsSnapshot is not null)
         {
-            var creditsEntry = BuildCreditsEntry(ResolveCreditsToken(creditsSnapshot), localization);
+            CodexRateLimitWindowSummary creditsEntry = BuildCreditsEntry(ResolveCreditsToken(creditsSnapshot), localization);
             if (creditsEntry.HasData)
             {
                 entries.Add(creditsEntry);
@@ -1949,7 +1938,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static int GetRateLimitSortPriority(JObject snapshot)
     {
-        var rawName = ReadString(snapshot, "limitName", "limit_name", "limitId", "limit_id");
+        string? rawName = ReadString(snapshot, "limitName", "limit_name", "limitId", "limit_id");
         return string.IsNullOrWhiteSpace(rawName) || string.Equals(rawName, "codex", StringComparison.OrdinalIgnoreCase)
             ? 0
             : 1;
@@ -1957,7 +1946,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string GetRateLimitDisplayName(JObject snapshot)
     {
-        var rawName = ReadString(snapshot, "limitName", "limit_name", "limitId", "limit_id");
+        string? rawName = ReadString(snapshot, "limitName", "limit_name", "limitId", "limit_id");
         if (string.IsNullOrWhiteSpace(rawName)
             || string.Equals(rawName, "codex", StringComparison.OrdinalIgnoreCase))
         {
@@ -1969,7 +1958,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static JToken? ResolveRateLimitWindow(JObject snapshot, params string[] candidateKeys)
     {
-        foreach (var key in candidateKeys)
+        foreach (string key in candidateKeys)
         {
             if (snapshot[key] is JToken direct)
             {
@@ -1979,9 +1968,9 @@ public sealed class CodexProcessService : IDisposable
 
         if (snapshot["windows"] is JArray windows)
         {
-            foreach (var key in candidateKeys)
+            foreach (string key in candidateKeys)
             {
-                var match = windows
+                JObject? match = windows
                     .OfType<JObject>()
                     .FirstOrDefault(window => MatchesRateLimitWindow(window, key));
                 if (match is not null)
@@ -2006,7 +1995,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static bool MatchesRateLimitWindow(JObject window, string key)
     {
-        var name = ReadString(window, "name", "title", "id", "kind") ?? string.Empty;
+        string name = ReadString(window, "name", "title", "id", "kind") ?? string.Empty;
         return !string.IsNullOrWhiteSpace(name)
             && name.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0;
     }
@@ -2018,15 +2007,15 @@ public sealed class CodexProcessService : IDisposable
             return new CodexRateLimitWindowSummary();
         }
 
-        var title = BuildRateLimitWindowTitle(limitDisplayName, windowObject, localization);
-        var usedPercent = ReadPercent(windowObject, "usedPercent", "used_percent", "usagePercent", "usage_percent");
-        var remainingPercent = ReadPercent(windowObject, "remainingPercent", "remaining_percent", "percentRemaining", "percent_remaining");
-        var resetsAt = ReadResetTime(windowObject);
-        var remaining = ReadDecimal(windowObject, "remaining", "remaining_requests", "remainingTokens", "remaining_tokens");
-        var limit = ReadDecimal(windowObject, "limit", "total", "max", "quota");
-        var effectiveRemainingPercent = remainingPercent
+        string title = BuildRateLimitWindowTitle(limitDisplayName, windowObject, localization);
+        double? usedPercent = ReadPercent(windowObject, "usedPercent", "used_percent", "usagePercent", "usage_percent");
+        double? remainingPercent = ReadPercent(windowObject, "remainingPercent", "remaining_percent", "percentRemaining", "percent_remaining");
+        DateTimeOffset? resetsAt = ReadResetTime(windowObject);
+        decimal? remaining = ReadDecimal(windowObject, "remaining", "remaining_requests", "remainingTokens", "remaining_tokens");
+        decimal? limit = ReadDecimal(windowObject, "limit", "total", "max", "quota");
+        double? effectiveRemainingPercent = remainingPercent
             ?? (usedPercent.HasValue ? Math.Max(0d, 100d - usedPercent.Value) : null);
-        var detailParts = new List<string>();
+        List<string> detailParts = [];
 
         if (remaining.HasValue || limit.HasValue)
         {
@@ -2039,7 +2028,7 @@ public sealed class CodexProcessService : IDisposable
             }
             else
             {
-                var value = remaining ?? limit;
+                decimal? value = remaining ?? limit;
                 detailParts.Add(value?.ToString("0.##", CultureInfo.CurrentUICulture) ?? string.Empty);
             }
         }
@@ -2063,8 +2052,8 @@ public sealed class CodexProcessService : IDisposable
 
     private static string BuildRateLimitWindowTitle(string limitDisplayName, JObject window, LocalizationService localization)
     {
-        var explicitTitle = ReadString(window, "title", "name");
-        var windowLabel = !string.IsNullOrWhiteSpace(explicitTitle) && !IsGenericRateLimitWindowName(explicitTitle)
+        string? explicitTitle = ReadString(window, "title", "name");
+        string windowLabel = !string.IsNullOrWhiteSpace(explicitTitle) && !IsGenericRateLimitWindowName(explicitTitle)
             ? explicitTitle.Trim()
             : BuildRateLimitWindowDurationLabel(ReadDurationMinutes(window), localization);
 
@@ -2091,7 +2080,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static CodexRateLimitWindowSummary BuildPlanEntry(JObject snapshot, LocalizationService localization)
     {
-        var planType = ReadString(snapshot, "planType", "plan_type", "plan", "tier");
+        string? planType = ReadString(snapshot, "planType", "plan_type", "plan", "tier");
         return string.IsNullOrWhiteSpace(planType)
             ? new CodexRateLimitWindowSummary()
             : new CodexRateLimitWindowSummary
@@ -2108,9 +2097,9 @@ public sealed class CodexProcessService : IDisposable
             return new CodexRateLimitWindowSummary();
         }
 
-        var hasCredits = ReadBoolean(creditsObject, "hasCredits", "has_credits");
-        var unlimited = ReadBoolean(creditsObject, "unlimited");
-        var balance = ReadDecimal(creditsObject, "balance", "available", "available_credits");
+        bool? hasCredits = ReadBoolean(creditsObject, "hasCredits", "has_credits");
+        bool? unlimited = ReadBoolean(creditsObject, "unlimited");
+        decimal? balance = ReadDecimal(creditsObject, "balance", "available", "available_credits");
 
         if (unlimited == true)
         {
@@ -2147,9 +2136,9 @@ public sealed class CodexProcessService : IDisposable
 
     private static double? ReadPercent(JObject source, params string[] keys)
     {
-        foreach (var key in keys)
+        foreach (string key in keys)
         {
-            var value = source[key]?.Value<double?>();
+            double? value = source[key]?.Value<double?>();
             if (!value.HasValue)
             {
                 continue;
@@ -2168,21 +2157,21 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        foreach (var key in keys)
+        foreach (string key in keys)
         {
-            var token = sourceObject[key];
+            JToken? token = sourceObject[key];
             if (token is null || token.Type == JTokenType.Null || token.Type == JTokenType.Undefined)
             {
                 continue;
             }
 
-            if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float)
+            if (token.Type is JTokenType.Integer or JTokenType.Float)
             {
                 return token.Value<decimal?>();
             }
 
-            var text = token.Value<string>();
-            if (decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var invariantValue)
+            string? text = token.Value<string>();
+            if (decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal invariantValue)
                 || decimal.TryParse(text, NumberStyles.Number, CultureInfo.CurrentUICulture, out invariantValue))
             {
                 return invariantValue;
@@ -2199,9 +2188,9 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        foreach (var key in keys)
+        foreach (string key in keys)
         {
-            var token = sourceObject[key];
+            JToken? token = sourceObject[key];
             if (token is null || token.Type == JTokenType.Null || token.Type == JTokenType.Undefined)
             {
                 continue;
@@ -2212,8 +2201,8 @@ public sealed class CodexProcessService : IDisposable
                 return token.Value<bool>();
             }
 
-            var text = token.Value<string>();
-            if (bool.TryParse(text, out var parsed))
+            string? text = token.Value<string>();
+            if (bool.TryParse(text, out bool parsed))
             {
                 return parsed;
             }
@@ -2229,9 +2218,9 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        foreach (var key in keys)
+        foreach (string key in keys)
         {
-            var value = sourceObject[key]?.Value<string>();
+            string? value = sourceObject[key]?.Value<string>();
             if (!string.IsNullOrWhiteSpace(value))
             {
                 return value;
@@ -2243,7 +2232,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static DateTimeOffset? ReadResetTime(JObject source)
     {
-        var unixSeconds = source["resetsAt"]?.Value<long?>()
+        long? unixSeconds = source["resetsAt"]?.Value<long?>()
             ?? source["resets_at"]?.Value<long?>()
             ?? source["resetAt"]?.Value<long?>()
             ?? source["reset_at"]?.Value<long?>();
@@ -2252,11 +2241,11 @@ public sealed class CodexProcessService : IDisposable
             return DateTimeOffset.FromUnixTimeSeconds(unixSeconds.Value);
         }
 
-        var resetText = source["resetsAt"]?.Value<string>()
+        string? resetText = source["resetsAt"]?.Value<string>()
             ?? source["resets_at"]?.Value<string>()
             ?? source["resetAt"]?.Value<string>()
             ?? source["reset_at"]?.Value<string>();
-        if (DateTimeOffset.TryParse(resetText, out var resetAt))
+        if (DateTimeOffset.TryParse(resetText, out DateTimeOffset resetAt))
         {
             return resetAt;
         }
@@ -2298,7 +2287,7 @@ public sealed class CodexProcessService : IDisposable
     {
         foreach (Match match in MentionRegex.Matches(prompt ?? string.Empty))
         {
-            var rawValue = match.Groups["value"].Value.Trim();
+            string rawValue = match.Groups["value"].Value.Trim();
             if (string.IsNullOrWhiteSpace(rawValue))
             {
                 continue;
@@ -2316,7 +2305,7 @@ public sealed class CodexProcessService : IDisposable
                 continue;
             }
 
-            var candidatePath = ResolveMentionPath(rawValue, workingDirectory);
+            string? candidatePath = ResolveMentionPath(rawValue, workingDirectory);
             if (candidatePath is null)
             {
                 continue;
@@ -2334,15 +2323,15 @@ public sealed class CodexProcessService : IDisposable
     private IEnumerable<object> ExtractSkillInputs(string prompt)
     {
         Dictionary<string, string> skillsSnapshot;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            skillsSnapshot = new Dictionary<string, string>(_skillsByName, StringComparer.OrdinalIgnoreCase);
+            skillsSnapshot = new Dictionary<string, string>(this._skillsByName, StringComparer.OrdinalIgnoreCase);
         }
 
         foreach (Match match in SkillRegex.Matches(prompt ?? string.Empty))
         {
-            var skillName = match.Groups["value"].Value.Trim();
-            if (!skillsSnapshot.TryGetValue(skillName, out var skillPath))
+            string skillName = match.Groups["value"].Value.Trim();
+            if (!skillsSnapshot.TryGetValue(skillName, out string? skillPath))
             {
                 continue;
             }
@@ -2360,11 +2349,11 @@ public sealed class CodexProcessService : IDisposable
     {
         try
         {
-            var candidate = Path.IsPathRooted(rawValue)
+            string candidate = Path.IsPathRooted(rawValue)
                 ? rawValue
                 : Path.Combine(workingDirectory, rawValue.Replace('/', Path.DirectorySeparatorChar));
 
-            var fullPath = Path.GetFullPath(candidate);
+            string fullPath = Path.GetFullPath(candidate);
             if (File.Exists(fullPath) || Directory.Exists(fullPath))
             {
                 return fullPath;
@@ -2384,13 +2373,13 @@ public sealed class CodexProcessService : IDisposable
             return string.Empty;
         }
 
-        var builder = new StringBuilder();
-        foreach (var node in content.SelectTokens("$..text"))
+        StringBuilder builder = new();
+        foreach (JToken node in content.SelectTokens("$..text"))
         {
-            var value = node.Value<string>();
+            string? value = node.Value<string>();
             if (!string.IsNullOrWhiteSpace(value))
             {
-                builder.Append(value);
+                _ = builder.Append(value);
             }
         }
 
@@ -2399,8 +2388,8 @@ public sealed class CodexProcessService : IDisposable
 
     private static JToken? GetNestedToken(JToken? token, params string[] path)
     {
-        var current = token;
-        foreach (var segment in path)
+        JToken? current = token;
+        foreach (string segment in path)
         {
             if (current is not JObject obj)
             {
@@ -2419,7 +2408,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string? GetNestedString(JToken? token, params string[] path)
     {
-        var current = GetNestedToken(token, path);
+        JToken? current = GetNestedToken(token, path);
         if (current is null)
         {
             return null;
@@ -2447,18 +2436,18 @@ public sealed class CodexProcessService : IDisposable
 
     private static CodexThreadSummary? ParseThreadSummary(JToken? thread, string? activeThreadId)
     {
-        var threadId = thread?["id"]?.Value<string>();
+        string? threadId = thread?["id"]?.Value<string>();
         if (string.IsNullOrWhiteSpace(threadId))
         {
             return null;
         }
 
-        var preview = (thread?["preview"]?.Value<string>() ?? string.Empty).Trim();
-        var name = thread?["name"]?.Value<string>();
-        var sessionPath = thread?["path"]?.Value<string>();
-        var updatedAt = thread?["updatedAt"]?.Value<long?>() ?? 0L;
-        var status = GetNestedString(thread, "status", "type") ?? string.Empty;
-        var sanitizedPreview = TryReadThreadTitleFromSession(sessionPath);
+        string preview = (thread?["preview"]?.Value<string>() ?? string.Empty).Trim();
+        string? name = thread?["name"]?.Value<string>();
+        string? sessionPath = thread?["path"]?.Value<string>();
+        long updatedAt = thread?["updatedAt"]?.Value<long?>() ?? 0L;
+        string status = GetNestedString(thread, "status", "type") ?? string.Empty;
+        string sanitizedPreview = TryReadThreadTitleFromSession(sessionPath);
         if (string.IsNullOrWhiteSpace(sanitizedPreview))
         {
             sanitizedPreview = SanitizeThreadPreview(preview);
@@ -2486,7 +2475,7 @@ public sealed class CodexProcessService : IDisposable
 
         try
         {
-            using var reader = new StreamReader(sessionPath);
+            using StreamReader reader = new(sessionPath);
             string? line;
             while ((line = reader.ReadLine()) is not null)
             {
@@ -2495,8 +2484,8 @@ public sealed class CodexProcessService : IDisposable
                     continue;
                 }
 
-                var entry = JObject.Parse(line);
-                var userMessagePrompt = ExtractPromptFromSessionEvent(entry);
+                JObject entry = JObject.Parse(line);
+                string userMessagePrompt = ExtractPromptFromSessionEvent(entry);
                 if (!string.IsNullOrWhiteSpace(userMessagePrompt))
                 {
                     return BuildSummary(userMessagePrompt, userMessagePrompt);
@@ -2507,7 +2496,7 @@ public sealed class CodexProcessService : IDisposable
                     continue;
                 }
 
-                var payload = entry["payload"];
+                JToken? payload = entry["payload"];
                 if (!string.Equals(payload?["type"]?.Value<string>(), "message", StringComparison.Ordinal))
                 {
                     continue;
@@ -2518,7 +2507,7 @@ public sealed class CodexProcessService : IDisposable
                     continue;
                 }
 
-                var prompt = ExtractPromptFromSessionMessage(payload?["content"] as JArray);
+                string prompt = ExtractPromptFromSessionMessage(payload?["content"] as JArray);
                 return string.IsNullOrWhiteSpace(prompt) ? string.Empty : BuildSummary(prompt, prompt);
             }
         }
@@ -2536,7 +2525,7 @@ public sealed class CodexProcessService : IDisposable
             return string.Empty;
         }
 
-        var payload = entry["payload"];
+        JToken? payload = entry["payload"];
         if (!string.Equals(payload?["type"]?.Value<string>(), "user_message", StringComparison.Ordinal))
         {
             return string.Empty;
@@ -2552,21 +2541,21 @@ public sealed class CodexProcessService : IDisposable
             return string.Empty;
         }
 
-        var segments = new List<string>();
-        foreach (var item in content)
+        List<string> segments = [];
+        foreach (JToken? item in content)
         {
             if (!string.Equals(item?["type"]?.Value<string>(), "input_text", StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var text = item?["text"]?.Value<string>();
+            string? text = item?["text"]?.Value<string>();
             if (string.IsNullOrWhiteSpace(text))
             {
                 continue;
             }
 
-            var trimmed = text.Trim();
+            string trimmed = text.Trim();
             if (StartsWithAny(trimmed, ExtensionContextPrefixes)
                 || StartsWithAny(trimmed, IdeContextPrefixes)
                 || StartsWithAny(trimmed, PreferredMcpPrefixes))
@@ -2582,7 +2571,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string SanitizeThreadPreview(string preview)
     {
-        var trimmed = preview?.Trim() ?? string.Empty;
+        string trimmed = preview?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(trimmed))
         {
             return string.Empty;
@@ -2593,7 +2582,7 @@ public sealed class CodexProcessService : IDisposable
             return BuildSummary(trimmed, trimmed);
         }
 
-        var extractedPrompt = TryExtractPromptFromThreadPreview(trimmed);
+        string extractedPrompt = TryExtractPromptFromThreadPreview(trimmed);
         if (!string.IsNullOrWhiteSpace(extractedPrompt))
         {
             return BuildSummary(extractedPrompt, extractedPrompt);
@@ -2621,11 +2610,11 @@ public sealed class CodexProcessService : IDisposable
 
     private static string[] CreateLocalizedSet(params Func<LocalizationService, string>[] selectors)
     {
-        var languages = new[] { "pt-BR", "en", "es", "fr", "de" };
+        string[] languages = new[] { "pt-BR", "en", "es", "fr", "de" };
         return languages
             .SelectMany(language =>
             {
-                var localization = new LocalizationService(language);
+                LocalizationService localization = new(language);
                 return selectors.Select(selector => selector(localization));
             })
             .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -2635,7 +2624,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string TryExtractPromptFromThreadPreview(string preview)
     {
-        var text = preview.Trim();
+        string text = preview.Trim();
         text = RemoveLeadingExtensionContext(text);
         text = RemoveLeadingPreferredMcpContext(text);
         text = RemoveLeadingIdeContextPrefix(text);
@@ -2646,7 +2635,7 @@ public sealed class CodexProcessService : IDisposable
 
         if (StartsWithIdeContextLine(text))
         {
-            var trailingPrompt = ExtractPromptFromTrailingContextLine(text);
+            string trailingPrompt = ExtractPromptFromTrailingContextLine(text);
             return CompactSingleLine(trailingPrompt);
         }
 
@@ -2655,20 +2644,20 @@ public sealed class CodexProcessService : IDisposable
 
     private static string RemoveLeadingExtensionContext(string text)
     {
-        foreach (var prefix in ExtensionContextPrefixes)
+        foreach (string prefix in ExtensionContextPrefixes)
         {
             if (!text.StartsWith(prefix, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var closingQuoteIndex = text.IndexOf('"', prefix.Length);
+            int closingQuoteIndex = text.IndexOf('"', prefix.Length);
             if (closingQuoteIndex < 0)
             {
                 return string.Empty;
             }
 
-            var nextIndex = closingQuoteIndex + 1;
+            int nextIndex = closingQuoteIndex + 1;
             if (nextIndex < text.Length && text[nextIndex] == '.')
             {
                 nextIndex++;
@@ -2682,14 +2671,14 @@ public sealed class CodexProcessService : IDisposable
 
     private static string RemoveLeadingPreferredMcpContext(string text)
     {
-        foreach (var prefix in PreferredMcpPrefixes)
+        foreach (string prefix in PreferredMcpPrefixes)
         {
             if (!text.StartsWith(prefix, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var sentenceEndIndex = text.IndexOf('.');
+            int sentenceEndIndex = text.IndexOf('.');
             if (sentenceEndIndex < 0)
             {
                 return string.Empty;
@@ -2703,7 +2692,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string RemoveLeadingIdeContextPrefix(string text)
     {
-        foreach (var prefix in IdeContextPrefixes)
+        foreach (string prefix in IdeContextPrefixes)
         {
             if (text.StartsWith(prefix, StringComparison.Ordinal))
             {
@@ -2716,14 +2705,14 @@ public sealed class CodexProcessService : IDisposable
 
     private static bool TryStripLeadingIdeContextLine(ref string text)
     {
-        foreach (var prefix in IdeContextLinePrefixes)
+        foreach (string prefix in IdeContextLinePrefixes)
         {
             if (!text.StartsWith(prefix, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var newlineIndex = text.IndexOf('\n');
+            int newlineIndex = text.IndexOf('\n');
             if (newlineIndex < 0)
             {
                 return false;
@@ -2743,15 +2732,15 @@ public sealed class CodexProcessService : IDisposable
 
     private static string ExtractPromptFromTrailingContextLine(string text)
     {
-        foreach (var prefix in IdeContextLinePrefixes)
+        foreach (string prefix in IdeContextLinePrefixes)
         {
             if (!text.StartsWith(prefix, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var remainder = text.Substring(prefix.Length).TrimStart();
-            var match = TrailingPromptAfterPathRegex.Match(remainder);
+            string remainder = text.Substring(prefix.Length).TrimStart();
+            Match match = TrailingPromptAfterPathRegex.Match(remainder);
             if (match.Success)
             {
                 return match.Groups["prompt"].Value.Trim();
@@ -2765,34 +2754,32 @@ public sealed class CodexProcessService : IDisposable
 
     private static IReadOnlyList<ChatMessage> ParseThreadMessages(JToken thread, string? threadId, string? sessionPath)
     {
-        var sessionMessages = ReadMessagesFromSession(sessionPath);
+        IReadOnlyList<ChatMessage> sessionMessages = ReadMessagesFromSession(sessionPath);
         if (sessionMessages.Any(message => message.IsUser))
         {
             return sessionMessages;
         }
 
-        var messages = new List<ChatMessage>();
-        var turns = thread["turns"] as JArray;
-        if (turns is null)
+        List<ChatMessage> messages = [];
+        if (thread["turns"] is not JArray turns)
         {
             return sessionMessages.Count > 0 ? sessionMessages : messages;
         }
 
-        var fallbackPrompts = ReadPromptHistoryForThread(threadId);
-        var fallbackPromptIndex = 0;
+        IReadOnlyList<string> fallbackPrompts = ReadPromptHistoryForThread(threadId);
+        int fallbackPromptIndex = 0;
 
-        foreach (var turn in turns)
+        foreach (JToken turn in turns)
         {
-            var items = turn["items"] as JArray;
-            if (items is null)
+            if (turn["items"] is not JArray items)
             {
                 continue;
             }
 
-            var turnMessages = new List<ChatMessage>();
-            foreach (var item in items)
+            List<ChatMessage> turnMessages = [];
+            foreach (JToken item in items)
             {
-                var message = ParseThreadMessage(item);
+                ChatMessage? message = ParseThreadMessage(item);
                 if (message is not null)
                 {
                     turnMessages.Add(message);
@@ -2828,11 +2815,11 @@ public sealed class CodexProcessService : IDisposable
             return Array.Empty<ChatMessage>();
         }
 
-        var responseMessages = new List<ChatMessage>();
-        var eventMessages = new List<ChatMessage>();
+        List<ChatMessage> responseMessages = [];
+        List<ChatMessage> eventMessages = [];
         try
         {
-            using var reader = new StreamReader(sessionPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            using StreamReader reader = new(sessionPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             string? line;
             while ((line = reader.ReadLine()) is not null)
             {
@@ -2841,15 +2828,15 @@ public sealed class CodexProcessService : IDisposable
                     continue;
                 }
 
-                var entry = JObject.Parse(line);
-                var responseMessage = ParseSessionResponseMessage(entry);
+                JObject entry = JObject.Parse(line);
+                ChatMessage? responseMessage = ParseSessionResponseMessage(entry);
                 if (responseMessage is not null)
                 {
                     responseMessages.Add(responseMessage);
                     continue;
                 }
 
-                var eventMessage = ParseSessionEventMessage(entry);
+                ChatMessage? eventMessage = ParseSessionEventMessage(entry);
                 if (eventMessage is not null)
                 {
                     eventMessages.Add(eventMessage);
@@ -2870,7 +2857,7 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        var payload = entry["payload"];
+        JToken? payload = entry["payload"];
         if (!string.Equals(payload?["type"]?.Value<string>(), "message", StringComparison.Ordinal))
         {
             return null;
@@ -2886,16 +2873,16 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        var payload = entry["payload"];
-        var payloadType = payload?["type"]?.Value<string>();
+        JToken? payload = entry["payload"];
+        string? payloadType = payload?["type"]?.Value<string>();
         switch (payloadType)
         {
             case "user_message":
-                var userText = NormalizeUserMessageTextSegment(payload?["message"]?.Value<string>());
+                string userText = NormalizeUserMessageTextSegment(payload?["message"]?.Value<string>());
                 return string.IsNullOrWhiteSpace(userText) ? null : new ChatMessage(true, userText);
 
             case "agent_message":
-                var agentText = payload?["message"]?.Value<string>();
+                string? agentText = payload?["message"]?.Value<string>();
                 return string.IsNullOrWhiteSpace(agentText) ? null : new ChatMessage(false, agentText);
 
             default:
@@ -2910,7 +2897,7 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        var sessionsRoot = Path.Combine(
+        string sessionsRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".codex",
             "sessions");
@@ -2938,7 +2925,7 @@ public sealed class CodexProcessService : IDisposable
             return Array.Empty<string>();
         }
 
-        var historyPath = Path.Combine(
+        string historyPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".codex",
             "history.jsonl");
@@ -2948,10 +2935,10 @@ public sealed class CodexProcessService : IDisposable
             return Array.Empty<string>();
         }
 
-        var prompts = new List<string>();
+        List<string> prompts = [];
         try
         {
-            using var reader = new StreamReader(historyPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            using StreamReader reader = new(historyPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             string? line;
             while ((line = reader.ReadLine()) is not null)
             {
@@ -2960,13 +2947,13 @@ public sealed class CodexProcessService : IDisposable
                     continue;
                 }
 
-                var entry = JObject.Parse(line);
+                JObject entry = JObject.Parse(line);
                 if (!string.Equals(entry["session_id"]?.Value<string>(), threadId, StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                var prompt = NormalizeUserMessageTextSegment(entry["text"]?.Value<string>());
+                string prompt = NormalizeUserMessageTextSegment(entry["text"]?.Value<string>());
                 if (!string.IsNullOrWhiteSpace(prompt))
                 {
                     prompts.Add(prompt);
@@ -2982,14 +2969,14 @@ public sealed class CodexProcessService : IDisposable
 
     private static ChatMessage? ParseThreadMessage(JToken? item)
     {
-        var itemType = item?["type"]?.Value<string>();
+        string? itemType = item?["type"]?.Value<string>();
         switch (itemType)
         {
             case "message":
                 return ParseRoleMessage(item);
 
             case "userMessage":
-                var userText = ExtractUserMessageText(item?["content"]);
+                string userText = ExtractUserMessageText(item?["content"]);
                 if (string.IsNullOrWhiteSpace(userText))
                 {
                     userText = ExtractUserMessageText(item?["text"] ?? item?["message"]);
@@ -2998,7 +2985,7 @@ public sealed class CodexProcessService : IDisposable
                 return string.IsNullOrWhiteSpace(userText) ? null : new ChatMessage(true, userText);
 
             case "agentMessage":
-                var agentText = ExtractAgentMessageText(item);
+                string agentText = ExtractAgentMessageText(item);
                 return string.IsNullOrWhiteSpace(agentText) ? null : new ChatMessage(false, agentText);
 
             case "plan":
@@ -3025,10 +3012,10 @@ public sealed class CodexProcessService : IDisposable
 
     private static ChatMessage? ParseRoleMessage(JToken? item)
     {
-        var role = item?["role"]?.Value<string>();
+        string? role = item?["role"]?.Value<string>();
         if (string.Equals(role, "user", StringComparison.OrdinalIgnoreCase))
         {
-            var userText = ExtractUserMessageText(item?["content"]);
+            string userText = ExtractUserMessageText(item?["content"]);
             if (string.IsNullOrWhiteSpace(userText))
             {
                 userText = ExtractUserMessageText(item?["text"] ?? item?["message"]);
@@ -3040,7 +3027,7 @@ public sealed class CodexProcessService : IDisposable
         if (string.Equals(role, "assistant", StringComparison.OrdinalIgnoreCase)
             || string.Equals(role, "agent", StringComparison.OrdinalIgnoreCase))
         {
-            var agentText = ExtractAgentMessageText(item);
+            string agentText = ExtractAgentMessageText(item);
             return string.IsNullOrWhiteSpace(agentText) ? null : new ChatMessage(false, agentText);
         }
 
@@ -3049,7 +3036,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string ExtractAgentMessageText(JToken? item)
     {
-        var text = item?["text"]?.Value<string>();
+        string? text = item?["text"]?.Value<string>();
         if (string.IsNullOrWhiteSpace(text))
         {
             text = ExtractText(item?["content"]);
@@ -3080,15 +3067,15 @@ public sealed class CodexProcessService : IDisposable
             return string.Empty;
         }
 
-        var segments = new List<string>();
-        foreach (var item in items)
+        List<string> segments = [];
+        foreach (JToken? item in items)
         {
             switch (item?["type"]?.Value<string>())
             {
                 case "text":
                 case "input_text":
-                    var text = item?["text"]?.Value<string>();
-                    var normalizedText = NormalizeUserMessageTextSegment(text);
+                    string? text = item?["text"]?.Value<string>();
+                    string normalizedText = NormalizeUserMessageTextSegment(text);
                     if (!string.IsNullOrWhiteSpace(normalizedText))
                     {
                         segments.Add(normalizedText);
@@ -3102,7 +3089,7 @@ public sealed class CodexProcessService : IDisposable
                     break;
 
                 case "mention":
-                    var mention = item?["name"]?.Value<string>() ?? item?["path"]?.Value<string>();
+                    string? mention = item?["name"]?.Value<string>() ?? item?["path"]?.Value<string>();
                     if (!string.IsNullOrWhiteSpace(mention))
                     {
                         segments.Add("@" + mention);
@@ -3110,7 +3097,7 @@ public sealed class CodexProcessService : IDisposable
                     break;
 
                 case "skill":
-                    var skill = item?["name"]?.Value<string>();
+                    string? skill = item?["name"]?.Value<string>();
                     if (!string.IsNullOrWhiteSpace(skill))
                     {
                         segments.Add("$" + skill);
@@ -3118,7 +3105,7 @@ public sealed class CodexProcessService : IDisposable
                     break;
 
                 default:
-                    var fallbackText = NormalizeUserMessageTextSegment(item?["text"]?.Value<string>());
+                    string fallbackText = NormalizeUserMessageTextSegment(item?["text"]?.Value<string>());
                     if (!string.IsNullOrWhiteSpace(fallbackText))
                     {
                         segments.Add(fallbackText);
@@ -3137,7 +3124,7 @@ public sealed class CodexProcessService : IDisposable
             return string.Empty;
         }
 
-        var trimmed = text.Trim();
+        string trimmed = text.Trim();
         if (StartsWithAny(trimmed, ExtensionContextPrefixes)
             || StartsWithAny(trimmed, IdeContextPrefixes)
             || StartsWithAny(trimmed, PreferredMcpPrefixes)
@@ -3151,28 +3138,28 @@ public sealed class CodexProcessService : IDisposable
 
     private static ChatMessage? BuildThreadEventMessage(JToken? item)
     {
-        var itemType = item?["type"]?.Value<string>();
+        string? itemType = item?["type"]?.Value<string>();
         switch (itemType)
         {
             case "plan":
-                var planText = NormalizeDetail(item?["text"]?.Value<string>(), maxLength: null);
+                string? planText = NormalizeDetail(item?["text"]?.Value<string>(), maxLength: null);
                 return CreatePlanEventMessage(planText);
 
             default:
-                var localization = new LocalizationService();
+                LocalizationService localization = new();
                 switch (itemType)
                 {
                     case "reasoning":
-                        var reasoningText = NormalizeDetail(JoinTextArray(item?["summary"]));
+                        string? reasoningText = NormalizeDetail(JoinTextArray(item?["summary"]));
                         return CreateEventMessage(localization.EventReasoningTitle, BuildSummary(reasoningText, localization.EventReasoningUpdated), reasoningText);
 
                     case "commandExecution":
-                        var command = item?["command"]?.Value<string>();
-                        var status = item?["status"]?.Value<string>();
-                        var exitCode = item?["exitCode"]?.Value<int?>();
-                        var durationMs = item?["durationMs"]?.Value<long?>();
-                        var aggregatedOutput = NormalizeDetail(item?["aggregatedOutput"]?.Value<string>());
-                        var cwd = item?["cwd"]?.Value<string>();
+                        string? command = item?["command"]?.Value<string>();
+                        string? status = item?["status"]?.Value<string>();
+                        int? exitCode = item?["exitCode"]?.Value<int?>();
+                        long? durationMs = item?["durationMs"]?.Value<long?>();
+                        string? aggregatedOutput = NormalizeDetail(item?["aggregatedOutput"]?.Value<string>());
+                        string? cwd = item?["cwd"]?.Value<string>();
                         return CreateEventMessage(
                             localization.EventCommandTitle,
                             BuildCommandSummary(command, status, exitCode, durationMs, localization),
@@ -3181,16 +3168,16 @@ public sealed class CodexProcessService : IDisposable
                                 string.IsNullOrWhiteSpace(aggregatedOutput) ? null : localization.EventOutputLabel + Environment.NewLine + aggregatedOutput));
 
                     case "fileChange":
-                        var changes = item?["changes"] as JArray;
+                        JArray? changes = item?["changes"] as JArray;
                         return CreateEventMessage(localization.EventFileChangesTitle, BuildFileChangeSummary(changes, localization), BuildFileChangeDetail(changes, localization));
 
                     case "mcpToolCall":
-                        var server = item?["server"]?.Value<string>();
-                        var tool = item?["tool"]?.Value<string>();
-                        var toolLabel = string.IsNullOrWhiteSpace(server) ? tool : server + "." + tool;
-                        var toolStatus = item?["status"]?.Value<string>();
-                        var toolDurationMs = item?["durationMs"]?.Value<long?>();
-                        var errorMessage = GetNestedString(item, "error", "message");
+                        string? server = item?["server"]?.Value<string>();
+                        string? tool = item?["tool"]?.Value<string>();
+                        string? toolLabel = string.IsNullOrWhiteSpace(server) ? tool : server + "." + tool;
+                        string? toolStatus = item?["status"]?.Value<string>();
+                        long? toolDurationMs = item?["durationMs"]?.Value<long?>();
+                        string? errorMessage = GetNestedString(item, "error", "message");
                         bool? mcpSuccess = null;
                         if (!string.IsNullOrWhiteSpace(errorMessage))
                         {
@@ -3215,8 +3202,8 @@ public sealed class CodexProcessService : IDisposable
                                 BuildNamedTextBlock(localization.EventResultLabel, ExtractContentText(GetNestedToken(item, "result", "content")) ?? SerializeStructuredValue(item?["result"]))));
 
                     case "dynamicToolCall":
-                        var dynamicTool = item?["tool"]?.Value<string>();
-                        var success = item?["success"]?.Value<bool?>();
+                        string? dynamicTool = item?["tool"]?.Value<string>();
+                        bool? success = item?["success"]?.Value<bool?>();
                         return CreateEventMessage(
                             localization.EventToolTitle,
                             BuildToolSummary(dynamicTool, item?["status"]?.Value<string>(), item?["durationMs"]?.Value<long?>(), localization, success),
@@ -3225,8 +3212,8 @@ public sealed class CodexProcessService : IDisposable
                                 BuildNamedTextBlock(localization.EventOutputLabel, ExtractContentText(item?["contentItems"]) ?? SerializeStructuredValue(item?["contentItems"]))));
 
                     case "collabAgentToolCall":
-                        var collabTool = item?["tool"]?.Value<string>();
-                        var receiverIds = item?["receiverThreadIds"] is JArray receivers
+                        string? collabTool = item?["tool"]?.Value<string>();
+                        string receiverIds = item?["receiverThreadIds"] is JArray receivers
                             ? string.Join(", ", receivers.Values<string>().Where(value => !string.IsNullOrWhiteSpace(value)))
                             : string.Empty;
                         return CreateEventMessage(
@@ -3237,7 +3224,7 @@ public sealed class CodexProcessService : IDisposable
                                 BuildNamedJsonBlock(localization.EventArgumentsLabel, item?["arguments"])));
 
                     case "webSearch":
-                        var query = item?["query"]?.Value<string>();
+                        string? query = item?["query"]?.Value<string>();
                         return CreateEventMessage(
                             localization.EventWebSearchTitle,
                             BuildSummary(query, localization.EventWebSearchTitle),
@@ -3269,7 +3256,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static ChatMessage CreatePlanEventMessage(string? planText)
     {
-        var localization = new LocalizationService();
+        LocalizationService localization = new();
         return CreateEventMessage(
             localization.EventPlanTitle,
             BuildSummary(planText, localization.EventPlanUpdated),
@@ -3285,8 +3272,8 @@ public sealed class CodexProcessService : IDisposable
         int? detailMaxLength = 2200,
         bool supportsMarkdownDetail = false)
     {
-        var normalizedSummary = BuildSummary(summary, title);
-        var normalizedDetail = NormalizeDetail(detail, detailMaxLength);
+        string normalizedSummary = BuildSummary(summary, title);
+        string? normalizedDetail = NormalizeDetail(detail, detailMaxLength);
         if (string.Equals(normalizedSummary, CompactSingleLine(normalizedDetail), StringComparison.Ordinal))
         {
             normalizedDetail = null;
@@ -3304,8 +3291,8 @@ public sealed class CodexProcessService : IDisposable
 
     private static string? BuildStructuredPlanMarkdown(string? explanation, JArray? plan, LocalizationService localization)
     {
-        var sections = new List<string>();
-        var normalizedExplanation = NormalizeDetail(explanation, maxLength: null);
+        List<string> sections = [];
+        string? normalizedExplanation = NormalizeDetail(explanation, maxLength: null);
         if (!string.IsNullOrWhiteSpace(normalizedExplanation))
         {
             sections.Add(normalizedExplanation);
@@ -3313,10 +3300,10 @@ public sealed class CodexProcessService : IDisposable
 
         if (plan is not null)
         {
-            var items = new List<string>();
-            foreach (var step in plan)
+            List<string> items = [];
+            foreach (JToken? step in plan)
             {
-                var stepText = NormalizeDetail(step?["step"]?.Value<string>(), maxLength: null);
+                string? stepText = NormalizeDetail(step?["step"]?.Value<string>(), maxLength: null);
                 if (string.IsNullOrWhiteSpace(stepText))
                 {
                     continue;
@@ -3364,8 +3351,8 @@ public sealed class CodexProcessService : IDisposable
 
     private static string BuildCommandSummary(string? command, string? status, int? exitCode, long? durationMs, LocalizationService localization)
     {
-        var parts = new List<string>();
-        var compactCommand = CompactSingleLine(command);
+        List<string> parts = [];
+        string compactCommand = CompactSingleLine(command);
         if (!string.IsNullOrWhiteSpace(compactCommand))
         {
             parts.Add(Truncate(compactCommand, 120));
@@ -3381,7 +3368,7 @@ public sealed class CodexProcessService : IDisposable
             parts.Add("exit " + exitCode.Value);
         }
 
-        var durationSuffix = BuildDurationSuffix(durationMs);
+        string durationSuffix = BuildDurationSuffix(durationMs);
         if (!string.IsNullOrWhiteSpace(durationSuffix))
         {
             parts.Add(durationSuffix);
@@ -3397,11 +3384,11 @@ public sealed class CodexProcessService : IDisposable
             return localization.EventUpdatedFiles;
         }
 
-        var parts = new List<string>();
-        foreach (var change in changes.Take(3))
+        List<string> parts = [];
+        foreach (JToken? change in changes.Take(3))
         {
-            var path = change?["path"]?.Value<string>();
-            var kind = GetNestedString(change, "kind", "type");
+            string? path = change?["path"]?.Value<string>();
+            string? kind = GetNestedString(change, "kind", "type");
             if (!string.IsNullOrWhiteSpace(path))
             {
                 parts.Add(string.IsNullOrWhiteSpace(kind) ? path! : kind + " " + path);
@@ -3423,13 +3410,13 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        var details = new List<string>();
-        foreach (var change in changes.Take(6))
+        List<string> details = [];
+        foreach (JToken? change in changes.Take(6))
         {
-            var path = change?["path"]?.Value<string>();
-            var kind = GetNestedString(change, "kind", "type");
-            var header = BuildSummary(string.IsNullOrWhiteSpace(kind) ? path : kind + " " + path, localization.EventFileUpdated);
-            var diff = NormalizeDetail(change?["diff"]?.Value<string>());
+            string? path = change?["path"]?.Value<string>();
+            string? kind = GetNestedString(change, "kind", "type");
+            string header = BuildSummary(string.IsNullOrWhiteSpace(kind) ? path : kind + " " + path, localization.EventFileUpdated);
+            string? diff = NormalizeDetail(change?["diff"]?.Value<string>());
             details.Add(string.IsNullOrWhiteSpace(diff) ? header : header + Environment.NewLine + Truncate(diff, 700));
         }
 
@@ -3443,8 +3430,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string JoinTextArray(JToken? token)
     {
-        var values = token as JArray;
-        if (values is null)
+        if (token is not JArray values)
         {
             return string.Empty;
         }
@@ -3454,8 +3440,8 @@ public sealed class CodexProcessService : IDisposable
 
     private static string BuildToolSummary(string? label, string? status, long? durationMs, LocalizationService localization, bool? success = null)
     {
-        var parts = new List<string>();
-        var compactLabel = CompactSingleLine(label);
+        List<string> parts = [];
+        string compactLabel = CompactSingleLine(label);
         if (!string.IsNullOrWhiteSpace(compactLabel))
         {
             parts.Add(Truncate(compactLabel, 120));
@@ -3470,7 +3456,7 @@ public sealed class CodexProcessService : IDisposable
             parts.Add("[" + status!.Trim() + "]");
         }
 
-        var durationSuffix = BuildDurationSuffix(durationMs);
+        string durationSuffix = BuildDurationSuffix(durationMs);
         if (!string.IsNullOrWhiteSpace(durationSuffix))
         {
             parts.Add(durationSuffix);
@@ -3481,7 +3467,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string BuildSummary(string? value, string fallback)
     {
-        var compact = CompactSingleLine(value);
+        string compact = CompactSingleLine(value);
         return string.IsNullOrWhiteSpace(compact) ? fallback : Truncate(compact, 180);
     }
 
@@ -3492,7 +3478,7 @@ public sealed class CodexProcessService : IDisposable
             return string.Empty;
         }
 
-        var compact = Regex.Replace(value.Replace("\r", " ").Replace("\n", " "), @"\s+", " ");
+        string compact = Regex.Replace(value.Replace("\r", " ").Replace("\n", " "), @"\s+", " ");
         return compact.Trim();
     }
 
@@ -3503,7 +3489,7 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        var normalized = value.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        string normalized = value.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return null;
@@ -3514,13 +3500,13 @@ public sealed class CodexProcessService : IDisposable
 
     private static string? BuildNamedTextBlock(string label, string? value)
     {
-        var normalized = NormalizeDetail(value);
+        string? normalized = NormalizeDetail(value);
         return string.IsNullOrWhiteSpace(normalized) ? null : label + Environment.NewLine + normalized;
     }
 
     private static string? BuildNamedJsonBlock(string label, JToken? value)
     {
-        var serialized = SerializeStructuredValue(value);
+        string? serialized = SerializeStructuredValue(value);
         return string.IsNullOrWhiteSpace(serialized) ? null : label + Environment.NewLine + serialized;
     }
 
@@ -3546,7 +3532,7 @@ public sealed class CodexProcessService : IDisposable
             return null;
         }
 
-        var textParts = content.SelectTokens("$..text")
+        List<string> textParts = content.SelectTokens("$..text")
             .Values<string>()
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value.Trim())
@@ -3563,7 +3549,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string? BuildDetailSections(params string?[] sections)
     {
-        var parts = sections
+        List<string> parts = sections
             .Where(section => !string.IsNullOrWhiteSpace(section))
             .Select(section => section!.Trim())
             .ToList();
@@ -3580,7 +3566,7 @@ public sealed class CodexProcessService : IDisposable
             return string.Empty;
         }
 
-        var duration = TimeSpan.FromMilliseconds(durationMs.Value);
+        TimeSpan duration = TimeSpan.FromMilliseconds(durationMs.Value);
         if (duration.TotalSeconds < 1)
         {
             return durationMs.Value + " ms";
@@ -3612,9 +3598,9 @@ public sealed class CodexProcessService : IDisposable
     private void PublishError(string text)
     {
         ActiveTurnState? turnState;
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            turnState = _activeTurn;
+            turnState = this._activeTurn;
         }
 
         turnState?.OnError(text);
@@ -3625,22 +3611,22 @@ public sealed class CodexProcessService : IDisposable
         List<TaskCompletionSource<JToken?>> pendingRequests;
         ActiveTurnState? turnState;
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            pendingRequests = _pendingRequests.Values.ToList();
-            _pendingRequests.Clear();
-            turnState = _activeTurn;
-            _threadId = null;
-            _threadConfigKey = null;
-            _threadLoaded = false;
-            _skillsCacheKey = null;
-            _serverInput = null;
-            _serverProcess = null;
+            pendingRequests = this._pendingRequests.Values.ToList();
+            this._pendingRequests.Clear();
+            turnState = this._activeTurn;
+            this._threadId = null;
+            this._threadConfigKey = null;
+            this._threadLoaded = false;
+            this._skillsCacheKey = null;
+            this._serverInput = null;
+            this._serverProcess = null;
         }
 
-        foreach (var pendingRequest in pendingRequests)
+        foreach (TaskCompletionSource<JToken?> pendingRequest in pendingRequests)
         {
-            pendingRequest.TrySetException(new InvalidOperationException(message));
+            _ = pendingRequest.TrySetException(new InvalidOperationException(message));
         }
 
         turnState?.OnError(message + Environment.NewLine);
@@ -3652,22 +3638,22 @@ public sealed class CodexProcessService : IDisposable
         Process? process;
         StreamWriter? input;
 
-        lock (_syncRoot)
+        lock (this._syncRoot)
         {
-            process = _serverProcess;
-            input = _serverInput;
-            _serverProcess = null;
-            _serverInput = null;
-            _initializedTcs = null;
-            _threadId = null;
-            _threadConfigKey = null;
-            _threadLoaded = false;
-            _skillsCacheKey = null;
-            _skillsByName.Clear();
+            process = this._serverProcess;
+            input = this._serverInput;
+            this._serverProcess = null;
+            this._serverInput = null;
+            this._initializedTcs = null;
+            this._threadId = null;
+            this._threadConfigKey = null;
+            this._threadLoaded = false;
+            this._skillsCacheKey = null;
+            this._skillsByName.Clear();
 
             if (clearConfig)
             {
-                _serverConfigKey = null;
+                this._serverConfigKey = null;
             }
         }
 
@@ -3697,7 +3683,7 @@ public sealed class CodexProcessService : IDisposable
 
     private CodexApprovalRequest BuildApprovalRequest(string method, JToken? parameters)
     {
-        var options = string.Equals(method, "item/commandExecution/requestApproval", StringComparison.Ordinal)
+        IReadOnlyList<CodexApprovalOption> options = string.Equals(method, "item/commandExecution/requestApproval", StringComparison.Ordinal)
             ? BuildCommandApprovalOptions(parameters?["availableDecisions"] as JArray, parameters?["proposedExecpolicyAmendment"] as JArray)
             : BuildFileChangeApprovalOptions();
 
@@ -3721,27 +3707,26 @@ public sealed class CodexProcessService : IDisposable
 
     private static CodexUserInputRequest BuildUserInputRequest(JToken? parameters)
     {
-        var request = new CodexUserInputRequest
+        CodexUserInputRequest request = new()
         {
             ThreadId = parameters?["threadId"]?.Value<string>() ?? string.Empty,
             TurnId = parameters?["turnId"]?.Value<string>() ?? string.Empty,
             ItemId = parameters?["itemId"]?.Value<string>() ?? string.Empty
         };
 
-        var questions = parameters?["questions"] as JArray;
-        if (questions is null)
+        if (parameters?["questions"] is not JArray questions)
         {
             return request;
         }
 
-        var items = new List<CodexUserInputQuestion>();
-        foreach (var question in questions)
+        List<CodexUserInputQuestion> items = [];
+        foreach (JToken? question in questions)
         {
-            var options = question?["options"] as JArray;
-            var mappedOptions = new List<CodexUserInputOption>();
+            JArray? options = question?["options"] as JArray;
+            List<CodexUserInputOption> mappedOptions = [];
             if (options is not null)
             {
-                foreach (var option in options)
+                foreach (JToken? option in options)
                 {
                     mappedOptions.Add(new CodexUserInputOption
                     {
@@ -3768,60 +3753,60 @@ public sealed class CodexProcessService : IDisposable
 
     private async Task<JToken> ResolveApprovalDecisionAsync(CodexApprovalRequest request)
     {
-        var info = JsonConvert.SerializeObject(request, Formatting.None);
+        string info = JsonConvert.SerializeObject(request, Formatting.None);
         if (!string.IsNullOrWhiteSpace(info))
         {
-            PublishError("[" + GetLocalization().OutputTagApproval + "] " + info + Environment.NewLine);
+            this.PublishError("[" + this.GetLocalization().OutputTagApproval + "] " + info + Environment.NewLine);
         }
 
-        if (ApprovalRequestHandler is null)
+        if (this.ApprovalRequestHandler is null)
         {
             return GetDefaultDeclineDecision(request.Method);
         }
 
         try
         {
-            var decision = await ApprovalRequestHandler.Invoke(request).ConfigureAwait(false);
+            JToken? decision = await this.ApprovalRequestHandler.Invoke(request).ConfigureAwait(false);
             return decision ?? GetDefaultDeclineDecision(request.Method);
         }
         catch (Exception ex)
         {
-            PublishError("[" + GetLocalization().OutputTagApproval + "] " + ex.Message + Environment.NewLine);
+            this.PublishError("[" + this.GetLocalization().OutputTagApproval + "] " + ex.Message + Environment.NewLine);
             return GetDefaultDeclineDecision(request.Method);
         }
     }
 
     private async Task<JObject?> ResolveUserInputRequestAsync(CodexUserInputRequest request)
     {
-        if (UserInputRequestHandler is null)
+        if (this.UserInputRequestHandler is null)
         {
             return new JObject { ["answers"] = new JObject() };
         }
 
         try
         {
-            return await UserInputRequestHandler.Invoke(request).ConfigureAwait(false);
+            return await this.UserInputRequestHandler.Invoke(request).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            PublishError("[" + GetLocalization().OutputTagUserInput + "] " + ex.Message + Environment.NewLine);
+            this.PublishError("[" + this.GetLocalization().OutputTagUserInput + "] " + ex.Message + Environment.NewLine);
             return new JObject { ["answers"] = new JObject() };
         }
     }
 
     private LocalizationService GetLocalization()
     {
-        return new LocalizationService(_languageOverride);
+        return new LocalizationService(this._languageOverride);
     }
 
     private static IReadOnlyList<CodexApprovalOption> BuildCommandApprovalOptions(JArray? availableDecisions, JArray? proposedExecpolicyAmendment)
     {
-        var options = new List<CodexApprovalOption>();
+        List<CodexApprovalOption> options = [];
         if (availableDecisions is not null)
         {
-            foreach (var decision in availableDecisions)
+            foreach (JToken decision in availableDecisions)
             {
-                var option = CreateCommandApprovalOption(decision, proposedExecpolicyAmendment);
+                CodexApprovalOption? option = CreateCommandApprovalOption(decision, proposedExecpolicyAmendment);
                 if (option is not null)
                 {
                     options.Add(option);
@@ -3843,7 +3828,7 @@ public sealed class CodexProcessService : IDisposable
     {
         if (decision.Type == JTokenType.String)
         {
-            var key = decision.Value<string>();
+            string? key = decision.Value<string>();
             return string.IsNullOrWhiteSpace(key) ? null : new CodexApprovalOption(key!, JValue.CreateString(key!));
         }
 
@@ -3885,7 +3870,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string BuildServerArguments(CodexExtensionSettings settings)
     {
-        var args = new List<string> { "app-server", "--listen", "stdio://" };
+        List<string> args = ["app-server", "--listen", "stdio://"];
 
         if (!HasProfileArgument(settings.AdditionalArguments) && !string.IsNullOrWhiteSpace(settings.Profile))
         {
@@ -3893,7 +3878,7 @@ public sealed class CodexProcessService : IDisposable
             args.Add(settings.Profile.Trim());
         }
 
-        foreach (var line in BuildManagedMcpOverrideLines(settings))
+        foreach (string line in BuildManagedMcpOverrideLines(settings))
         {
             args.Add("-c");
             args.Add(line);
@@ -3901,7 +3886,7 @@ public sealed class CodexProcessService : IDisposable
 
         if (!string.IsNullOrWhiteSpace(settings.RawTomlOverrides))
         {
-            foreach (var line in settings.RawTomlOverrides.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            foreach (string? line in settings.RawTomlOverrides.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 args.Add("-c");
                 args.Add(line.Trim());
@@ -3910,7 +3895,7 @@ public sealed class CodexProcessService : IDisposable
 
         if (!string.IsNullOrWhiteSpace(settings.AdditionalArguments))
         {
-            foreach (var token in SplitArguments(settings.AdditionalArguments))
+            foreach (string token in SplitArguments(settings.AdditionalArguments))
             {
                 args.Add(token);
             }
@@ -3921,7 +3906,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string BuildServerConfigKey(CodexExtensionSettings settings)
     {
-        var resolvedExecutablePath = CodexExecutableResolver.ResolveExecutableLocation(settings.CodexExecutablePath, settings.EnvironmentVariables);
+        string resolvedExecutablePath = CodexExecutableResolver.ResolveExecutableLocation(settings.CodexExecutablePath, settings.EnvironmentVariables);
         return string.Join("\n", new[]
         {
             string.IsNullOrWhiteSpace(resolvedExecutablePath)
@@ -3942,14 +3927,14 @@ public sealed class CodexProcessService : IDisposable
             yield break;
         }
 
-        foreach (var server in settings.ManagedMcpServers)
+        foreach (CodexManagedMcpServer? server in settings.ManagedMcpServers)
         {
             if (server is null || !server.Enabled)
             {
                 continue;
             }
 
-            var name = (server.Name ?? string.Empty).Trim();
+            string name = (server.Name ?? string.Empty).Trim();
             if (!IsValidManagedMcpName(name))
             {
                 continue;
@@ -3957,7 +3942,7 @@ public sealed class CodexProcessService : IDisposable
 
             if (string.Equals(server.TransportType, "url", StringComparison.OrdinalIgnoreCase))
             {
-                var url = (server.Url ?? string.Empty).Trim();
+                string url = (server.Url ?? string.Empty).Trim();
                 if (string.IsNullOrWhiteSpace(url))
                 {
                     continue;
@@ -3968,7 +3953,7 @@ public sealed class CodexProcessService : IDisposable
                 continue;
             }
 
-            var command = (server.Command ?? string.Empty).Trim();
+            string command = (server.Command ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(command))
             {
                 continue;
@@ -3977,7 +3962,7 @@ public sealed class CodexProcessService : IDisposable
             yield return "[mcp_servers." + name + "]";
             yield return "command = " + EncodeTomlString(command);
 
-            var args = SplitManagedMcpArguments(server.Arguments).ToList();
+            List<string> args = SplitManagedMcpArguments(server.Arguments).ToList();
             if (args.Count > 0)
             {
                 yield return "args = [" + string.Join(", ", args.Select(EncodeTomlString)) + "]";
@@ -4054,7 +4039,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static string? NormalizeServiceTier(string? serviceTier)
     {
-        var normalized = (serviceTier ?? string.Empty).Trim().ToLowerInvariant();
+        string normalized = (serviceTier ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return null;
@@ -4070,7 +4055,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static ProcessStartInfo BuildStartInfo(string executablePath, string arguments, string workingDirectory)
     {
-        var resolvedWorkingDirectory = ResolveWorkingDirectory(workingDirectory);
+        string resolvedWorkingDirectory = ResolveWorkingDirectory(workingDirectory);
         if (IsPowerShellScript(executablePath))
         {
             return new ProcessStartInfo
@@ -4091,7 +4076,7 @@ public sealed class CodexProcessService : IDisposable
             };
         }
 
-        var commandShell = Environment.GetEnvironmentVariable("ComSpec");
+        string commandShell = Environment.GetEnvironmentVariable("ComSpec");
         if (string.IsNullOrWhiteSpace(commandShell))
         {
             commandShell = "cmd.exe";
@@ -4122,7 +4107,7 @@ public sealed class CodexProcessService : IDisposable
             return string.Empty;
         }
 
-        var normalized = path.Trim();
+        string normalized = path.Trim();
         if (normalized.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
         {
             normalized = @"\\" + normalized.Substring(@"\\?\UNC\".Length);
@@ -4165,16 +4150,16 @@ public sealed class CodexProcessService : IDisposable
 
     private static void ApplyEnvironmentVariables(ProcessStartInfo psi, string environmentVariables)
     {
-        foreach (var line in environmentVariables.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        foreach (string? line in environmentVariables.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            var separatorIndex = line.IndexOf('=');
+            int separatorIndex = line.IndexOf('=');
             if (separatorIndex <= 0)
             {
                 continue;
             }
 
-            var key = line.Substring(0, separatorIndex).Trim();
-            var value = line.Substring(separatorIndex + 1).Trim();
+            string key = line.Substring(0, separatorIndex).Trim();
+            string value = line.Substring(separatorIndex + 1).Trim();
             if (!string.IsNullOrWhiteSpace(key))
             {
                 psi.EnvironmentVariables[key] = value;
@@ -4209,7 +4194,7 @@ public sealed class CodexProcessService : IDisposable
             return false;
         }
 
-        var extension = Path.GetExtension(executablePath);
+        string extension = Path.GetExtension(executablePath);
         return string.IsNullOrEmpty(extension)
             || extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".bat", StringComparison.OrdinalIgnoreCase);
@@ -4228,8 +4213,8 @@ public sealed class CodexProcessService : IDisposable
 
     private static string ResolvePowerShellHost()
     {
-        var systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
-        var windowsPowerShell = Path.Combine(systemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+        string systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        string windowsPowerShell = Path.Combine(systemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
         return File.Exists(windowsPowerShell)
             ? windowsPowerShell
             : "powershell.exe";
@@ -4242,10 +4227,10 @@ public sealed class CodexProcessService : IDisposable
 
     private static IEnumerable<string> SplitArguments(string commandLine)
     {
-        var current = new StringBuilder();
-        var inQuotes = false;
+        StringBuilder current = new();
+        bool inQuotes = false;
 
-        foreach (var ch in commandLine)
+        foreach (char ch in commandLine)
         {
             if (ch == '"')
             {
@@ -4258,13 +4243,13 @@ public sealed class CodexProcessService : IDisposable
                 if (current.Length > 0)
                 {
                     yield return current.ToString();
-                    current.Clear();
+                    _ = current.Clear();
                 }
 
                 continue;
             }
 
-            current.Append(ch);
+            _ = current.Append(ch);
         }
 
         if (current.Length > 0)
@@ -4275,7 +4260,7 @@ public sealed class CodexProcessService : IDisposable
 
     private static bool HasProfileArgument(string? commandLine)
     {
-        foreach (var token in SplitArguments(commandLine ?? string.Empty))
+        foreach (string token in SplitArguments(commandLine ?? string.Empty))
         {
             if (string.Equals(token, "--profile", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(token, "-p", StringComparison.OrdinalIgnoreCase)
@@ -4292,11 +4277,11 @@ public sealed class CodexProcessService : IDisposable
     {
         public ActiveTurnState(Action<string> onOutput, Action<string> onError, Action<ChatMessage>? onEventMessage, Action<long, long?>? onTokenUsage)
         {
-            OnOutput = onOutput;
-            OnError = onError;
-            OnEventMessage = onEventMessage;
-            OnTokenUsage = onTokenUsage;
-            Completion = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            this.OnOutput = onOutput;
+            this.OnError = onError;
+            this.OnEventMessage = onEventMessage;
+            this.OnTokenUsage = onTokenUsage;
+            this.Completion = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
         public TaskCompletionSource<int> Completion { get; }
@@ -4312,41 +4297,41 @@ public sealed class CodexProcessService : IDisposable
 
         public string AppendPlanDelta(string? itemId, string delta)
         {
-            var key = string.IsNullOrWhiteSpace(itemId) ? "__plan__" : itemId!;
-            if (!PlanTextByItemId.TryGetValue(key, out var builder))
+            string key = string.IsNullOrWhiteSpace(itemId) ? "__plan__" : itemId!;
+            if (!this.PlanTextByItemId.TryGetValue(key, out StringBuilder? builder))
             {
                 builder = new StringBuilder();
-                PlanTextByItemId[key] = builder;
+                this.PlanTextByItemId[key] = builder;
             }
 
-            builder.Append(delta);
+            _ = builder.Append(delta);
             return builder.ToString();
         }
 
         public void SetPlanText(string? itemId, string planText)
         {
-            var key = string.IsNullOrWhiteSpace(itemId) ? "__plan__" : itemId!;
-            PlanTextByItemId[key] = new StringBuilder(planText ?? string.Empty);
+            string key = string.IsNullOrWhiteSpace(itemId) ? "__plan__" : itemId!;
+            this.PlanTextByItemId[key] = new StringBuilder(planText ?? string.Empty);
         }
 
         public string? GetPlanText(string? itemId)
         {
-            var key = string.IsNullOrWhiteSpace(itemId) ? "__plan__" : itemId!;
-            if (PlanTextByItemId.TryGetValue(key, out var builder) && builder.Length > 0)
+            string key = string.IsNullOrWhiteSpace(itemId) ? "__plan__" : itemId!;
+            if (this.PlanTextByItemId.TryGetValue(key, out StringBuilder? builder) && builder.Length > 0)
             {
                 return builder.ToString();
             }
 
             if (!string.Equals(key, "__plan__", StringComparison.Ordinal)
-                && PlanTextByItemId.TryGetValue("__plan__", out var sharedBuilder)
+                && this.PlanTextByItemId.TryGetValue("__plan__", out StringBuilder? sharedBuilder)
                 && sharedBuilder.Length > 0)
             {
                 return sharedBuilder.ToString();
             }
 
-            if (PlanTextByItemId.Count == 1)
+            if (this.PlanTextByItemId.Count == 1)
             {
-                return PlanTextByItemId.Values.First().ToString();
+                return this.PlanTextByItemId.Values.First().ToString();
             }
 
             return null;
@@ -4354,7 +4339,7 @@ public sealed class CodexProcessService : IDisposable
 
         public void TrySetResult(int result)
         {
-            Completion.TrySetResult(result);
+            _ = this.Completion.TrySetResult(result);
         }
     }
 }

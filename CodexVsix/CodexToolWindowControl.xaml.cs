@@ -10,9 +10,11 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using System.Windows.Threading;
+
 using CodexVsix.Models;
 using CodexVsix.Services;
 using CodexVsix.ViewModels;
+
 using Microsoft.VisualStudio.Shell;
 
 namespace CodexVsix;
@@ -20,8 +22,8 @@ namespace CodexVsix;
 public partial class CodexToolWindowControl : UserControl
 {
     private readonly CodexToolWindowViewModel _viewModel;
-    private readonly List<FrameworkElement> _chatSelectableElements = new();
-    private readonly HashSet<ChatMessage> _subscribedChatMessages = new();
+    private readonly List<FrameworkElement> _chatSelectableElements = [];
+    private readonly HashSet<ChatMessage> _subscribedChatMessages = [];
     private FrameworkElement? _selectionAnchorElement;
     private object? _selectionAnchorPosition;
     private bool _isSelectingAcrossBubbles;
@@ -31,83 +33,84 @@ public partial class CodexToolWindowControl : UserControl
 
     public CodexToolWindowControl()
     {
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
         try
         {
-            InitializeComponent();
+            this.InitializeComponent();
         }
         catch (Exception ex)
         {
-            ActivityLog.TryLogError("CodexVsix", new LocalizationService().ToolWindowXamlLoadLogMessage + Environment.NewLine + ex);
+            _ = ActivityLog.TryLogError("CodexVsix", new LocalizationService().ToolWindowXamlLoadLogMessage + Environment.NewLine + ex);
             throw;
         }
 
         try
         {
-            _viewModel = CodexViewModelHost.GetOrCreate();
+            this._viewModel = CodexViewModelHost.GetOrCreate();
         }
         catch (Exception ex)
         {
-            ActivityLog.TryLogError("CodexVsix", new LocalizationService().ToolWindowViewModelCreateLogMessage + Environment.NewLine + ex);
+            _ = ActivityLog.TryLogError("CodexVsix", new LocalizationService().ToolWindowViewModelCreateLogMessage + Environment.NewLine + ex);
             throw;
         }
 
-        DataContext = _viewModel;
-        _viewModel.Messages.CollectionChanged += OnMessagesCollectionChanged;
-        foreach (var message in _viewModel.Messages)
+        this.DataContext = this._viewModel;
+        this._viewModel.Messages.CollectionChanged += this.OnMessagesCollectionChanged;
+        foreach (ChatMessage message in this._viewModel.Messages)
         {
-            SubscribeMessage(message);
+            this.SubscribeMessage(message);
         }
 
-        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
-        Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
-        SizeChanged += OnSizeChanged;
-        PreviewKeyDown += OnPreviewKeyDown;
+        this._viewModel.PropertyChanged += this.OnViewModelPropertyChanged;
+        Loaded += this.OnLoaded;
+        Unloaded += this.OnUnloaded;
+        SizeChanged += this.OnSizeChanged;
+        PreviewKeyDown += this.OnPreviewKeyDown;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _viewModel.EnsureToolWindowStartupState();
-        UpdatePromptTextBoxMaxHeight();
-        ScrollChatToEnd();
-        SyncUserInputPromptWindow();
+        this._viewModel.EnsureToolWindowStartupState();
+        this.UpdatePromptTextBoxMaxHeight();
+        this.ScrollChatToEnd();
+        this.SyncUserInputPromptWindow();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        CloseUserInputPromptWindow(suppressCancel: true);
+        this.CloseUserInputPromptWindow(suppressCancel: true);
     }
 
     private void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        UpdatePromptTextBoxMaxHeight();
+        this.UpdatePromptTextBoxMaxHeight();
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control && PromptTextBox.IsKeyboardFocusWithin)
+        if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control && this.PromptTextBox.IsKeyboardFocusWithin)
         {
-            ExecuteSendShortcut(e);
+            this.ExecuteSendShortcut(e);
             return;
         }
 
         if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.V && System.Windows.Clipboard.ContainsImage())
         {
-            _viewModel.PasteImageFromClipboard();
+            this._viewModel.PasteImageFromClipboard();
             e.Handled = true;
             return;
         }
 
-        if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.A && GetFocusedChatSelectableElement() is not null)
+        if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.A && this.GetFocusedChatSelectableElement() is not null)
         {
-            SelectAllChatText();
+            this.SelectAllChatText();
             e.Handled = true;
             return;
         }
 
         if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C)
         {
-            var selectedChatText = GetSelectedChatText();
+            string selectedChatText = this.GetSelectedChatText();
             if (!string.IsNullOrWhiteSpace(selectedChatText))
             {
                 Clipboard.SetText(selectedChatText);
@@ -118,98 +121,98 @@ public partial class CodexToolWindowControl : UserControl
 
     private void UpdatePromptTextBoxMaxHeight()
     {
-        var availableHeight = ActualHeight > 0 ? ActualHeight : SystemParameters.WorkArea.Height;
-        PromptTextBox.MaxHeight = Math.Max(PromptTextBox.MinHeight, availableHeight * 0.5d);
+        double availableHeight = this.ActualHeight > 0 ? this.ActualHeight : SystemParameters.WorkArea.Height;
+        this.PromptTextBox.MaxHeight = Math.Max(this.PromptTextBox.MinHeight, availableHeight * 0.5d);
     }
 
     private void OnMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         if (e.OldItems is not null)
         {
-            foreach (var item in e.OldItems.OfType<ChatMessage>())
+            foreach (ChatMessage item in e.OldItems.OfType<ChatMessage>())
             {
-                UnsubscribeMessage(item);
+                this.UnsubscribeMessage(item);
             }
         }
 
         if (e.NewItems is not null)
         {
-            foreach (var item in e.NewItems.OfType<ChatMessage>())
+            foreach (ChatMessage item in e.NewItems.OfType<ChatMessage>())
             {
-                SubscribeMessage(item);
+                this.SubscribeMessage(item);
             }
         }
 
         if (e.Action == NotifyCollectionChangedAction.Reset)
         {
-            foreach (var item in _subscribedChatMessages.ToList())
+            foreach (ChatMessage? item in this._subscribedChatMessages.ToList())
             {
-                UnsubscribeMessage(item);
+                this.UnsubscribeMessage(item);
             }
 
-            foreach (var item in _viewModel.Messages)
+            foreach (ChatMessage item in this._viewModel.Messages)
             {
-                SubscribeMessage(item);
+                this.SubscribeMessage(item);
             }
         }
 
-        ScrollChatToEnd();
+        this.ScrollChatToEnd();
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (string.Equals(e.PropertyName, nameof(CodexToolWindowViewModel.IsBusy), StringComparison.Ordinal))
         {
-            ScrollChatToEnd();
+            this.ScrollChatToEnd();
         }
 
         if (string.IsNullOrEmpty(e.PropertyName)
             || string.Equals(e.PropertyName, nameof(CodexToolWindowViewModel.CurrentUserInputPrompt), StringComparison.Ordinal)
             || string.Equals(e.PropertyName, nameof(CodexToolWindowViewModel.HasCurrentUserInputPrompt), StringComparison.Ordinal))
         {
-            SyncUserInputPromptWindow();
+            this.SyncUserInputPromptWindow();
         }
     }
 
     private void ScrollChatToEnd()
     {
-        if (_chatScrollToEndScheduled)
+        if (this._chatScrollToEndScheduled)
         {
             return;
         }
 
-        _chatScrollToEndScheduled = true;
-        _ = Dispatcher.InvokeAsync(() =>
+        this._chatScrollToEndScheduled = true;
+        _ = this.Dispatcher.InvokeAsync(() =>
         {
-            _chatScrollToEndScheduled = false;
-            if (_viewModel.Messages.Count == 0)
+            this._chatScrollToEndScheduled = false;
+            if (this._viewModel.Messages.Count == 0)
             {
                 return;
             }
 
-            ChatContentHost.ScrollIntoView(_viewModel.Messages[_viewModel.Messages.Count - 1]);
+            this.ChatContentHost.ScrollIntoView(this._viewModel.Messages[this._viewModel.Messages.Count - 1]);
         }, DispatcherPriority.Background);
     }
 
     private void SubscribeMessage(ChatMessage message)
     {
-        if (_subscribedChatMessages.Add(message))
+        if (this._subscribedChatMessages.Add(message))
         {
-            message.PropertyChanged += OnMessagePropertyChanged;
+            message.PropertyChanged += this.OnMessagePropertyChanged;
         }
     }
 
     private void UnsubscribeMessage(ChatMessage message)
     {
-        if (_subscribedChatMessages.Remove(message))
+        if (this._subscribedChatMessages.Remove(message))
         {
-            message.PropertyChanged -= OnMessagePropertyChanged;
+            message.PropertyChanged -= this.OnMessagePropertyChanged;
         }
     }
 
     private void OnMessagePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (sender is not ChatMessage message || !ReferenceEquals(message, _viewModel.Messages.LastOrDefault()))
+        if (sender is not ChatMessage message || !ReferenceEquals(message, this._viewModel.Messages.LastOrDefault()))
         {
             return;
         }
@@ -218,23 +221,23 @@ public partial class CodexToolWindowControl : UserControl
             || string.Equals(e.PropertyName, nameof(ChatMessage.DisplayText), StringComparison.Ordinal)
             || string.Equals(e.PropertyName, nameof(ChatMessage.Detail), StringComparison.Ordinal))
         {
-            ScrollChatToEnd();
+            this.ScrollChatToEnd();
         }
     }
 
     private void OnChatTextBoxLoaded(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement element && !_chatSelectableElements.Contains(element))
+        if (sender is FrameworkElement element && !this._chatSelectableElements.Contains(element))
         {
-            _chatSelectableElements.Add(element);
+            this._chatSelectableElements.Add(element);
 
             switch (element)
             {
                 case TextBox textBox:
-                    textBox.ContextMenu ??= CreateChatContextMenu();
+                    textBox.ContextMenu ??= this.CreateChatContextMenu();
                     break;
                 case RichTextBox richTextBox:
-                    richTextBox.ContextMenu ??= CreateChatContextMenu();
+                    richTextBox.ContextMenu ??= this.CreateChatContextMenu();
                     break;
             }
         }
@@ -247,12 +250,12 @@ public partial class CodexToolWindowControl : UserControl
             return;
         }
 
-        _chatSelectableElements.Remove(element);
-        if (ReferenceEquals(_selectionAnchorElement, element))
+        _ = this._chatSelectableElements.Remove(element);
+        if (ReferenceEquals(this._selectionAnchorElement, element))
         {
-            _selectionAnchorElement = null;
-            _selectionAnchorPosition = null;
-            _isSelectingAcrossBubbles = false;
+            this._selectionAnchorElement = null;
+            this._selectionAnchorPosition = null;
+            this._isSelectingAcrossBubbles = false;
         }
     }
 
@@ -263,9 +266,9 @@ public partial class CodexToolWindowControl : UserControl
             return;
         }
 
-        _selectionAnchorElement = element;
-        _selectionAnchorPosition = GetSelectionPoint(element, e.GetPosition(element));
-        _isSelectingAcrossBubbles = true;
+        this._selectionAnchorElement = element;
+        this._selectionAnchorPosition = GetSelectionPoint(element, e.GetPosition(element));
+        this._isSelectingAcrossBubbles = true;
     }
 
     private void OnMenuButtonClick(object sender, RoutedEventArgs e)
@@ -283,13 +286,13 @@ public partial class CodexToolWindowControl : UserControl
 
     private void OnOpenHistoryPanelClick(object sender, RoutedEventArgs e)
     {
-        ExecuteViewModelCommand(_viewModel.OpenHistoryPanelCommand);
+        ExecuteViewModelCommand(this._viewModel.OpenHistoryPanelCommand);
         e.Handled = true;
     }
 
     private void OnOpenSettingsPanelClick(object sender, RoutedEventArgs e)
     {
-        ExecuteViewModelCommand(_viewModel.OpenSettingsPanelCommand);
+        ExecuteViewModelCommand(this._viewModel.OpenSettingsPanelCommand);
         e.Handled = true;
     }
 
@@ -310,7 +313,7 @@ public partial class CodexToolWindowControl : UserControl
             return;
         }
 
-        var placementDataContext = (contextMenu.PlacementTarget as FrameworkElement)?.DataContext;
+        object? placementDataContext = (contextMenu.PlacementTarget as FrameworkElement)?.DataContext;
         contextMenu.DataContext = placementDataContext ?? contextMenu.DataContext;
         if (contextMenu.DataContext is not CodexToolWindowViewModel viewModel)
         {
@@ -325,15 +328,15 @@ public partial class CodexToolWindowControl : UserControl
 
         if (viewModel.HasRateLimitData)
         {
-            foreach (var entry in viewModel.RateLimitEntries.Where(item => item is not null && item.HasData))
+            foreach (CodexRateLimitWindowSummary? entry in viewModel.RateLimitEntries.Where(item => item is not null && item.HasData))
             {
-                contextMenu.Items.Add(CreateRateLimitMenuItem(entry));
+                _ = contextMenu.Items.Add(this.CreateRateLimitMenuItem(entry));
             }
 
             return;
         }
 
-        contextMenu.Items.Add(new MenuItem
+        _ = contextMenu.Items.Add(new MenuItem
         {
             Header = viewModel.Localization.RateLimitsUnavailable,
             IsEnabled = false
@@ -342,7 +345,7 @@ public partial class CodexToolWindowControl : UserControl
 
     private void OnCloseSidebarClick(object sender, RoutedEventArgs e)
     {
-        ExecuteViewModelCommand(_viewModel.CloseSidebarCommand);
+        ExecuteViewModelCommand(this._viewModel.CloseSidebarCommand);
         e.Handled = true;
     }
 
@@ -353,8 +356,8 @@ public partial class CodexToolWindowControl : UserControl
             return;
         }
 
-        var parameter = element.Tag ?? element.DataContext;
-        ExecuteViewModelCommand(_viewModel.SelectSettingsSectionCommand, parameter);
+        object parameter = element.Tag ?? element.DataContext;
+        ExecuteViewModelCommand(this._viewModel.SelectSettingsSectionCommand, parameter);
         e.Handled = true;
     }
 
@@ -362,46 +365,49 @@ public partial class CodexToolWindowControl : UserControl
     {
         if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
         {
-            ExecuteSendShortcut(e);
+            this.ExecuteSendShortcut(e);
         }
     }
 
     private void OnLanguageOptionsSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
         if (sender is not ListBox listBox || listBox.SelectedValue is not string value)
         {
             return;
         }
 
-        _viewModel.SelectedLanguageTag = value;
+        this._viewModel.SelectedLanguageTag = value;
     }
 
     private void OnLanguageOptionClick(object sender, RoutedEventArgs e)
     {
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
         if (sender is not FrameworkElement element || element.Tag is not string value)
         {
             return;
         }
 
-        _viewModel.SelectedLanguageTag = value;
-        if (_viewModel.CloseSidebarCommand.CanExecute(null))
+        this._viewModel.SelectedLanguageTag = value;
+        if (this._viewModel.CloseSidebarCommand.CanExecute(null))
         {
-            _viewModel.CloseSidebarCommand.Execute(null);
+            this._viewModel.CloseSidebarCommand.Execute(null);
         }
         e.Handled = true;
     }
 
     private void OnLanguageOptionPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
         if (sender is not FrameworkElement element || element.Tag is not string value)
         {
             return;
         }
 
-        _viewModel.SelectedLanguageTag = value;
-        if (_viewModel.CloseSidebarCommand.CanExecute(null))
+        this._viewModel.SelectedLanguageTag = value;
+        if (this._viewModel.CloseSidebarCommand.CanExecute(null))
         {
-            _viewModel.CloseSidebarCommand.Execute(null);
+            this._viewModel.CloseSidebarCommand.Execute(null);
         }
         e.Handled = true;
     }
@@ -413,10 +419,10 @@ public partial class CodexToolWindowControl : UserControl
             return;
         }
 
-        Dispatcher.BeginInvoke(new Action(() =>
+        _ = this.Dispatcher.BeginInvoke(new Action(() =>
         {
-            LanguageSearchTextBox.Focus();
-            Keyboard.Focus(LanguageSearchTextBox);
+            _ = this.LanguageSearchTextBox.Focus();
+            _ = Keyboard.Focus(this.LanguageSearchTextBox);
         }), DispatcherPriority.Input);
     }
 
@@ -427,10 +433,10 @@ public partial class CodexToolWindowControl : UserControl
             return;
         }
 
-        Dispatcher.BeginInvoke(new Action(() =>
+        _ = this.Dispatcher.BeginInvoke(new Action(() =>
         {
-            HistorySearchTextBox.Focus();
-            Keyboard.Focus(HistorySearchTextBox);
+            _ = this.HistorySearchTextBox.Focus();
+            _ = Keyboard.Focus(this.HistorySearchTextBox);
         }), DispatcherPriority.Input);
     }
 
@@ -438,82 +444,82 @@ public partial class CodexToolWindowControl : UserControl
     {
         base.OnPreviewMouseMove(e);
 
-        if (!_isSelectingAcrossBubbles || e.LeftButton != MouseButtonState.Pressed || _selectionAnchorElement is null || _selectionAnchorPosition is null)
+        if (!this._isSelectingAcrossBubbles || e.LeftButton != MouseButtonState.Pressed || this._selectionAnchorElement is null || this._selectionAnchorPosition is null)
         {
             return;
         }
 
-        var point = e.GetPosition(ChatContentHost);
-        var currentElement = FindChatSelectableElementAtPoint(point);
-        if (currentElement is null || ReferenceEquals(currentElement, _selectionAnchorElement))
+        Point point = e.GetPosition(this.ChatContentHost);
+        FrameworkElement? currentElement = this.FindChatSelectableElementAtPoint(point);
+        if (currentElement is null || ReferenceEquals(currentElement, this._selectionAnchorElement))
         {
             return;
         }
 
-        if (Mouse.Captured != ChatContentHost)
+        if (Mouse.Captured != this.ChatContentHost)
         {
-            Mouse.Capture(ChatContentHost, CaptureMode.SubTree);
+            _ = Mouse.Capture(this.ChatContentHost, CaptureMode.SubTree);
         }
 
-        ExtendSelectionAcrossBubbles(currentElement, e.GetPosition(currentElement));
+        this.ExtendSelectionAcrossBubbles(currentElement, e.GetPosition(currentElement));
     }
 
     protected override void OnPreviewMouseLeftButtonUp(MouseButtonEventArgs e)
     {
         base.OnPreviewMouseLeftButtonUp(e);
 
-        _isSelectingAcrossBubbles = false;
-        if (Mouse.Captured == ChatContentHost)
+        this._isSelectingAcrossBubbles = false;
+        if (Mouse.Captured == this.ChatContentHost)
         {
-            Mouse.Capture(null);
+            _ = Mouse.Capture(null);
         }
     }
 
     private void ExtendSelectionAcrossBubbles(FrameworkElement currentElement, Point point)
     {
-        if (_selectionAnchorElement is null || _selectionAnchorPosition is null)
+        if (this._selectionAnchorElement is null || this._selectionAnchorPosition is null)
         {
             return;
         }
 
-        var orderedElements = GetOrderedChatSelectableElements();
-        var anchorPosition = orderedElements.IndexOf(_selectionAnchorElement);
-        var currentPosition = orderedElements.IndexOf(currentElement);
+        List<FrameworkElement> orderedElements = this.GetOrderedChatSelectableElements();
+        int anchorPosition = orderedElements.IndexOf(this._selectionAnchorElement);
+        int currentPosition = orderedElements.IndexOf(currentElement);
         if (anchorPosition < 0 || currentPosition < 0)
         {
             return;
         }
 
-        var currentPositionValue = GetSelectionPoint(currentElement, point);
+        object? currentPositionValue = GetSelectionPoint(currentElement, point);
         if (currentPositionValue is null)
         {
             return;
         }
 
-        ClearChatSelection();
+        this.ClearChatSelection();
 
         if (anchorPosition == currentPosition)
         {
-            SelectRange(currentElement, _selectionAnchorPosition, currentPositionValue);
+            SelectRange(currentElement, this._selectionAnchorPosition, currentPositionValue);
             return;
         }
 
-        var forwardSelection = currentPosition > anchorPosition;
-        var start = forwardSelection ? anchorPosition : currentPosition;
-        var end = forwardSelection ? currentPosition : anchorPosition;
+        bool forwardSelection = currentPosition > anchorPosition;
+        int start = forwardSelection ? anchorPosition : currentPosition;
+        int end = forwardSelection ? currentPosition : anchorPosition;
 
-        for (var index = start; index <= end; index++)
+        for (int index = start; index <= end; index++)
         {
-            var element = orderedElements[index];
-            if (ReferenceEquals(element, _selectionAnchorElement))
+            FrameworkElement element = orderedElements[index];
+            if (ReferenceEquals(element, this._selectionAnchorElement))
             {
                 if (forwardSelection)
                 {
-                    SelectRange(element, _selectionAnchorPosition, GetSelectionEnd(element));
+                    SelectRange(element, this._selectionAnchorPosition, GetSelectionEnd(element));
                 }
                 else
                 {
-                    SelectRange(element, GetSelectionStart(element), _selectionAnchorPosition);
+                    SelectRange(element, GetSelectionStart(element), this._selectionAnchorPosition);
                 }
 
                 continue;
@@ -539,14 +545,14 @@ public partial class CodexToolWindowControl : UserControl
 
     private void OnChatCopyMenuItemClick(object sender, RoutedEventArgs e)
     {
-        var selectedChatText = GetSelectedChatText();
+        string selectedChatText = this.GetSelectedChatText();
         if (string.IsNullOrWhiteSpace(selectedChatText))
         {
-            var placementTarget = (sender as FrameworkElement)?.Parent is ContextMenu contextMenu
+            FrameworkElement? placementTarget = (sender as FrameworkElement)?.Parent is ContextMenu contextMenu
                 ? contextMenu.PlacementTarget as FrameworkElement
                 : null;
 
-            var fallbackSelection = placementTarget is null ? string.Empty : GetSelectedText(placementTarget);
+            string fallbackSelection = placementTarget is null ? string.Empty : GetSelectedText(placementTarget);
             if (!string.IsNullOrWhiteSpace(fallbackSelection))
             {
                 Clipboard.SetText(fallbackSelection);
@@ -560,29 +566,29 @@ public partial class CodexToolWindowControl : UserControl
 
     private void OnChatSelectAllMenuItemClick(object sender, RoutedEventArgs e)
     {
-        SelectAllChatText();
+        this.SelectAllChatText();
     }
 
     private ContextMenu CreateChatContextMenu()
     {
-        var contextMenu = new ContextMenu();
-        contextMenu.Items.Add(new MenuItem
+        ContextMenu contextMenu = new();
+        _ = contextMenu.Items.Add(new MenuItem
         {
-            Header = _viewModel.Localization.CopyButton
+            Header = this._viewModel.Localization.CopyButton
         });
-        contextMenu.Items.Add(new MenuItem
+        _ = contextMenu.Items.Add(new MenuItem
         {
-            Header = _viewModel.Localization.SelectAllButton
+            Header = this._viewModel.Localization.SelectAllButton
         });
 
         if (contextMenu.Items[0] is MenuItem copyMenuItem)
         {
-            copyMenuItem.Click += OnChatCopyMenuItemClick;
+            copyMenuItem.Click += this.OnChatCopyMenuItemClick;
         }
 
         if (contextMenu.Items[1] is MenuItem selectAllMenuItem)
         {
-            selectAllMenuItem.Click += OnChatSelectAllMenuItemClick;
+            selectAllMenuItem.Click += this.OnChatSelectAllMenuItemClick;
         }
 
         return contextMenu;
@@ -590,14 +596,14 @@ public partial class CodexToolWindowControl : UserControl
 
     private MenuItem CreateRateLimitMenuItem(CodexRateLimitWindowSummary entry)
     {
-        var menuItem = new MenuItem
+        MenuItem menuItem = new()
         {
             Header = entry,
-            HeaderTemplate = TryFindResource("RateLimitPopupEntryTemplate") as DataTemplate,
+            HeaderTemplate = this.TryFindResource("RateLimitPopupEntryTemplate") as DataTemplate,
             IsEnabled = false
         };
 
-        if (TryFindResource("PopupMenuItemStyle") is Style style)
+        if (this.TryFindResource("PopupMenuItemStyle") is Style style)
         {
             menuItem.Style = style;
         }
@@ -607,7 +613,7 @@ public partial class CodexToolWindowControl : UserControl
 
     private void SelectAllChatText()
     {
-        foreach (var element in GetOrderedChatSelectableElements())
+        foreach (FrameworkElement element in this.GetOrderedChatSelectableElements())
         {
             SelectAll(element);
         }
@@ -615,7 +621,7 @@ public partial class CodexToolWindowControl : UserControl
 
     private void ClearChatSelection()
     {
-        foreach (var element in _chatSelectableElements)
+        foreach (FrameworkElement element in this._chatSelectableElements)
         {
             ClearSelection(element);
         }
@@ -623,45 +629,45 @@ public partial class CodexToolWindowControl : UserControl
 
     private List<FrameworkElement> GetOrderedChatSelectableElements()
     {
-        return _chatSelectableElements
+        return this._chatSelectableElements
             .Where(element => element.IsLoaded)
-            .OrderBy(element => element.TranslatePoint(new Point(0, 0), ChatContentHost).Y)
-            .ThenBy(element => element.TranslatePoint(new Point(0, 0), ChatContentHost).X)
+            .OrderBy(element => element.TranslatePoint(new Point(0, 0), this.ChatContentHost).Y)
+            .ThenBy(element => element.TranslatePoint(new Point(0, 0), this.ChatContentHost).X)
             .ToList();
     }
 
     private FrameworkElement? FindChatSelectableElementAtPoint(Point point)
     {
-        var hit = ChatContentHost.InputHitTest(point) as DependencyObject;
-        var directMatch = FindSelectableChatTextBox(hit);
+        DependencyObject? hit = this.ChatContentHost.InputHitTest(point) as DependencyObject;
+        FrameworkElement? directMatch = FindSelectableChatTextBox(hit);
         if (directMatch is not null)
         {
             return directMatch;
         }
 
         FrameworkElement? nearestElement = null;
-        var nearestDistance = double.MaxValue;
+        double nearestDistance = double.MaxValue;
 
-        foreach (var element in GetOrderedChatSelectableElements())
+        foreach (FrameworkElement element in this.GetOrderedChatSelectableElements())
         {
-            var origin = element.TranslatePoint(new Point(0, 0), ChatContentHost);
-            var bounds = new Rect(origin, new Size(element.ActualWidth, element.ActualHeight));
+            Point origin = element.TranslatePoint(new Point(0, 0), this.ChatContentHost);
+            Rect bounds = new(origin, new Size(element.ActualWidth, element.ActualHeight));
             if (bounds.Contains(point))
             {
                 return element;
             }
 
-            var deltaX = point.X < bounds.Left
+            double deltaX = point.X < bounds.Left
                 ? bounds.Left - point.X
                 : point.X > bounds.Right
                     ? point.X - bounds.Right
                     : 0d;
-            var deltaY = point.Y < bounds.Top
+            double deltaY = point.Y < bounds.Top
                 ? bounds.Top - point.Y
                 : point.Y > bounds.Bottom
                     ? point.Y - bounds.Bottom
                     : 0d;
-            var distance = (deltaX * deltaX) + (deltaY * deltaY);
+            double distance = (deltaX * deltaX) + (deltaY * deltaY);
             if (distance < nearestDistance)
             {
                 nearestDistance = distance;
@@ -674,7 +680,7 @@ public partial class CodexToolWindowControl : UserControl
 
     private string GetSelectedChatText()
     {
-        var fragments = GetOrderedChatSelectableElements()
+        List<string> fragments = this.GetOrderedChatSelectableElements()
             .Select(GetSelectedText)
             .Where(text => !string.IsNullOrWhiteSpace(text))
             .ToList();
@@ -684,7 +690,7 @@ public partial class CodexToolWindowControl : UserControl
 
     private FrameworkElement? GetFocusedChatSelectableElement()
     {
-        return _chatSelectableElements.FirstOrDefault(element => element.IsKeyboardFocusWithin || element.IsFocused);
+        return this._chatSelectableElements.FirstOrDefault(element => element.IsKeyboardFocusWithin || element.IsFocused);
     }
 
     private static void SelectRange(FrameworkElement element, object start, object end)
@@ -692,10 +698,10 @@ public partial class CodexToolWindowControl : UserControl
         switch (element)
         {
             case TextBox textBox when start is int startIndex && end is int endIndex:
-                var boundedAnchor = Math.Max(0, Math.Min(startIndex, textBox.Text.Length));
-                var boundedCurrent = Math.Max(0, Math.Min(endIndex, textBox.Text.Length));
-                var selectionStart = Math.Min(boundedAnchor, boundedCurrent);
-                var selectionLength = Math.Abs(boundedCurrent - boundedAnchor);
+                int boundedAnchor = Math.Max(0, Math.Min(startIndex, textBox.Text.Length));
+                int boundedCurrent = Math.Max(0, Math.Min(endIndex, textBox.Text.Length));
+                int selectionStart = Math.Min(boundedAnchor, boundedCurrent);
+                int selectionLength = Math.Abs(boundedCurrent - boundedAnchor);
                 textBox.Select(selectionStart, selectionLength);
                 break;
             case RichTextBox richTextBox when start is TextPointer startPointer && end is TextPointer endPointer:
@@ -709,7 +715,7 @@ public partial class CodexToolWindowControl : UserControl
         switch (element)
         {
             case TextBox textBox:
-                var index = textBox.GetCharacterIndexFromPoint(point, true);
+                int index = textBox.GetCharacterIndexFromPoint(point, true);
                 return index >= 0 ? index : point.X <= 0 ? 0 : textBox.Text.Length;
             case RichTextBox richTextBox:
                 return richTextBox.GetPositionFromPoint(point, true) ?? richTextBox.Document.ContentEnd;
@@ -776,9 +782,9 @@ public partial class CodexToolWindowControl : UserControl
 
     private void ExecuteSendShortcut(KeyEventArgs e)
     {
-        if (_viewModel.SendCommand.CanExecute(null))
+        if (this._viewModel.SendCommand.CanExecute(null))
         {
-            _viewModel.SendCommand.Execute(null);
+            this._viewModel.SendCommand.Execute(null);
         }
 
         e.Handled = true;
@@ -794,7 +800,7 @@ public partial class CodexToolWindowControl : UserControl
 
     private static FrameworkElement? FindSelectableChatTextBox(DependencyObject? origin)
     {
-        var current = origin;
+        DependencyObject? current = origin;
         while (current is not null)
         {
             if (current is FrameworkElement element && string.Equals(element.Tag as string, "ChatSelectable", StringComparison.Ordinal))
@@ -852,55 +858,52 @@ public partial class CodexToolWindowControl : UserControl
 
     private void SyncUserInputPromptWindow()
     {
-        if (!_viewModel.HasCurrentUserInputPrompt)
+        if (!this._viewModel.HasCurrentUserInputPrompt)
         {
-            CloseUserInputPromptWindow(suppressCancel: true);
+            this.CloseUserInputPromptWindow(suppressCancel: true);
             return;
         }
 
-        if (_userInputPromptWindow is null)
+        if (this._userInputPromptWindow is null)
         {
-            _userInputPromptWindow = new UserInputPromptWindow
+            this._userInputPromptWindow = new UserInputPromptWindow
             {
-                DataContext = _viewModel
+                DataContext = this._viewModel,
+                Owner = Window.GetWindow(this)
             };
-            _userInputPromptWindow.Owner = Window.GetWindow(this);
-            _userInputPromptWindow.Closed += OnUserInputPromptWindowClosed;
-            _userInputPromptWindow.Show();
+            this._userInputPromptWindow.Closed += this.OnUserInputPromptWindowClosed;
+            this._userInputPromptWindow.Show();
             return;
         }
 
-        if (!_userInputPromptWindow.IsVisible)
+        if (!this._userInputPromptWindow.IsVisible)
         {
-            _userInputPromptWindow.Show();
+            this._userInputPromptWindow.Show();
         }
 
-        _userInputPromptWindow.Activate();
+        _ = this._userInputPromptWindow.Activate();
     }
 
     private void CloseUserInputPromptWindow(bool suppressCancel)
     {
-        if (_userInputPromptWindow is null)
+        if (this._userInputPromptWindow is null)
         {
             return;
         }
 
-        _suppressUserInputWindowClosedCancel = suppressCancel;
-        _userInputPromptWindow.Close();
-        _suppressUserInputWindowClosedCancel = false;
+        this._suppressUserInputWindowClosedCancel = suppressCancel;
+        this._userInputPromptWindow.Close();
+        this._suppressUserInputWindowClosedCancel = false;
     }
 
     private void OnUserInputPromptWindowClosed(object? sender, EventArgs e)
     {
-        if (_userInputPromptWindow is not null)
-        {
-            _userInputPromptWindow.Closed -= OnUserInputPromptWindowClosed;
-            _userInputPromptWindow = null;
-        }
+        this._userInputPromptWindow?.Closed -= this.OnUserInputPromptWindowClosed;
+        this._userInputPromptWindow = null;
 
-        if (!_suppressUserInputWindowClosedCancel && _viewModel.HasCurrentUserInputPrompt)
+        if (!this._suppressUserInputWindowClosedCancel && this._viewModel.HasCurrentUserInputPrompt)
         {
-            _viewModel.DismissUserInputPrompt();
+            this._viewModel.DismissUserInputPrompt();
         }
     }
 }

@@ -14,5 +14,5 @@ public sealed class CodexUserInputQuestion
 
     public bool IsSecret { get; set; }
 
-    public IReadOnlyList<CodexUserInputOption> Options { get; set; } = new List<CodexUserInputOption>();
+    public IReadOnlyList<CodexUserInputOption> Options { get; set; } = [];
 }

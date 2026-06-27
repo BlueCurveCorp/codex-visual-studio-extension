@@ -16,15 +16,15 @@ public sealed class CodexThreadSummary
 
     public bool IsActive { get; set; }
 
-    public string Title => string.IsNullOrWhiteSpace(Name) ? Preview : Name!;
+    public string Title => string.IsNullOrWhiteSpace(this.Name) ? this.Preview : this.Name!;
 
-    public string Subtitle => string.IsNullOrWhiteSpace(Name) ? string.Empty : Preview;
+    public string Subtitle => string.IsNullOrWhiteSpace(this.Name) ? string.Empty : this.Preview;
 
     public string UpdatedAtLabel
     {
         get
         {
-            var delta = DateTimeOffset.Now - UpdatedAt.ToLocalTime();
+            TimeSpan delta = DateTimeOffset.Now - this.UpdatedAt.ToLocalTime();
             if (delta.TotalMinutes < 1)
             {
                 return "now";

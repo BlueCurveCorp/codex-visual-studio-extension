@@ -10,7 +10,9 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+
 using CodexVsix.Services;
+
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
@@ -40,25 +42,25 @@ internal sealed class MermaidWebViewPreview : Grid
 
     public MermaidWebViewPreview(string code)
     {
-        _code = code ?? string.Empty;
-        _localization = new LocalizationService();
-        Height = 180;
-        MinHeight = 120;
-        Margin = new Thickness(0, 2, 0, 0);
-        VerticalAlignment = VerticalAlignment.Top;
-        ClipToBounds = true;
+        this._code = code ?? string.Empty;
+        this._localization = new LocalizationService();
+        this.Height = 180;
+        this.MinHeight = 120;
+        this.Margin = new Thickness(0, 2, 0, 0);
+        this.VerticalAlignment = VerticalAlignment.Top;
+        this.ClipToBounds = true;
 
-        _webView = new WebView2
+        this._webView = new WebView2
         {
             Visibility = Visibility.Visible,
             IsHitTestVisible = false,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Top,
-            Height = Height
+            Height = this.Height
         };
-        _webView.SetValue(UIElement.OpacityProperty, 0d);
+        this._webView.SetValue(UIElement.OpacityProperty, 0d);
 
-        _snapshotImage = new Image
+        this._snapshotImage = new Image
         {
             Visibility = Visibility.Collapsed,
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -67,64 +69,64 @@ internal sealed class MermaidWebViewPreview : Grid
             StretchDirection = StretchDirection.DownOnly
         };
 
-        _statusText = new TextBlock
+        this._statusText = new TextBlock
         {
-            Text = _localization.MermaidLoadingPreview,
+            Text = this._localization.MermaidLoadingPreview,
             Foreground = new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)),
             TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center
         };
 
-        _statusHost = new Border
+        this._statusHost = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(24, 255, 255, 255)),
             BorderBrush = new SolidColorBrush(Color.FromArgb(36, 255, 255, 255)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(14),
-            Child = _statusText
+            Child = this._statusText
         };
 
-        _bootstrapTimer = new DispatcherTimer(DispatcherPriority.Background)
+        this._bootstrapTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(MermaidBootstrapTimeoutMs + 2000)
         };
-        _bootstrapTimer.Tick += OnBootstrapTimerTick;
+        this._bootstrapTimer.Tick += this.OnBootstrapTimerTick;
 
-        Children.Add(_snapshotImage);
-        Children.Add(_webView);
-        Children.Add(_statusHost);
+        _ = this.Children.Add(this._snapshotImage);
+        _ = this.Children.Add(this._webView);
+        _ = this.Children.Add(this._statusHost);
 
-        Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
+        Loaded += this.OnLoaded;
+        Unloaded += this.OnUnloaded;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (_renderReady && !_isDisposed)
+        if (this._renderReady && !this._isDisposed)
         {
-            _statusHost.Visibility = Visibility.Collapsed;
-            _snapshotImage.Visibility = Visibility.Collapsed;
-            _webView.Visibility = Visibility.Visible;
-            _webView.SetValue(UIElement.OpacityProperty, 1d);
-            _webView.IsHitTestVisible = true;
+            this._statusHost.Visibility = Visibility.Collapsed;
+            this._snapshotImage.Visibility = Visibility.Collapsed;
+            this._webView.Visibility = Visibility.Visible;
+            this._webView.SetValue(UIElement.OpacityProperty, 1d);
+            this._webView.IsHitTestVisible = true;
             return;
         }
 
-        if (_isInitialized)
+        if (this._isInitialized)
         {
             return;
         }
 
-        _isInitialized = true;
-        _ = InitializeAsync();
+        this._isInitialized = true;
+        _ = this.InitializeAsync();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        if (_snapshotImage.Source is not null || _hasTerminalState)
+        if (this._snapshotImage.Source is not null || this._hasTerminalState)
         {
-            DisposeWebView();
+            this.DisposeWebView();
         }
     }
 
@@ -132,32 +134,32 @@ internal sealed class MermaidWebViewPreview : Grid
     {
         try
         {
-            var userDataFolder = Path.Combine(
+            string userDataFolder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "CodexVsix",
                 "WebView2");
-            Directory.CreateDirectory(userDataFolder);
-            var assetsFolder = EnsureLocalAssets();
+            _ = Directory.CreateDirectory(userDataFolder);
+            string assetsFolder = EnsureLocalAssets();
 
-            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
-            await _webView.EnsureCoreWebView2Async(environment);
-            _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
-            _webView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
-            _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-            _webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
-            _webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
-            _webView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
-            _webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+            CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
+            await this._webView.EnsureCoreWebView2Async(environment);
+            this._webView.CoreWebView2.WebMessageReceived += this.OnWebMessageReceived;
+            this._webView.CoreWebView2.NavigationCompleted += this.OnNavigationCompleted;
+            this._webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            this._webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            this._webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+            this._webView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
+            this._webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
                 MermaidAssetsHostName,
                 assetsFolder,
                 CoreWebView2HostResourceAccessKind.Allow);
-            ResetBootstrapTimer();
-            _webView.CoreWebView2.Navigate(BuildPreviewUri(_code));
+            this.ResetBootstrapTimer();
+            this._webView.CoreWebView2.Navigate(BuildPreviewUri(this._code));
         }
         catch (Exception ex)
         {
             Trace.WriteLine(ex);
-            Fail(_localization.MermaidInitFailed);
+            this.Fail(this._localization.MermaidInitFailed);
         }
     }
 
@@ -168,18 +170,18 @@ internal sealed class MermaidWebViewPreview : Grid
             return;
         }
 
-        Fail(string.Format(CultureInfo.CurrentUICulture, _localization.MermaidLoadFailedFormat, e.WebErrorStatus));
+        this.Fail(string.Format(CultureInfo.CurrentUICulture, this._localization.MermaidLoadFailedFormat, e.WebErrorStatus));
     }
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        var message = e.TryGetWebMessageAsString() ?? string.Empty;
+        string message = e.TryGetWebMessageAsString() ?? string.Empty;
         if (message.StartsWith("height:", StringComparison.Ordinal))
         {
-            var rawHeight = message.Substring("height:".Length);
-            if (double.TryParse(rawHeight, NumberStyles.Float, CultureInfo.InvariantCulture, out var height))
+            string rawHeight = message.Substring("height:".Length);
+            if (double.TryParse(rawHeight, NumberStyles.Float, CultureInfo.InvariantCulture, out double height))
             {
-                ApplyMeasuredHeight(Math.Max(120, height));
+                this.ApplyMeasuredHeight(Math.Max(120, height));
             }
 
             return;
@@ -187,143 +189,143 @@ internal sealed class MermaidWebViewPreview : Grid
 
         if (string.Equals(message, "ready", StringComparison.Ordinal))
         {
-            _renderReady = true;
-            StopBootstrapTimer();
-            _statusHost.Visibility = Visibility.Collapsed;
-            _snapshotImage.Visibility = Visibility.Collapsed;
-            _webView.Visibility = Visibility.Visible;
-            _webView.SetValue(UIElement.OpacityProperty, 1d);
-            _webView.IsHitTestVisible = true;
+            this._renderReady = true;
+            this.StopBootstrapTimer();
+            this._statusHost.Visibility = Visibility.Collapsed;
+            this._snapshotImage.Visibility = Visibility.Collapsed;
+            this._webView.Visibility = Visibility.Visible;
+            this._webView.SetValue(UIElement.OpacityProperty, 1d);
+            this._webView.IsHitTestVisible = true;
 
             return;
         }
 
         if (message.StartsWith("error:", StringComparison.Ordinal))
         {
-            var detail = message.Substring("error:".Length).Trim();
-            Fail(string.IsNullOrWhiteSpace(detail)
-                ? _localization.MermaidRenderFailed
-                : string.Format(CultureInfo.CurrentUICulture, _localization.MermaidRenderFailedFormat, detail));
+            string detail = message.Substring("error:".Length).Trim();
+            this.Fail(string.IsNullOrWhiteSpace(detail)
+                ? this._localization.MermaidRenderFailed
+                : string.Format(CultureInfo.CurrentUICulture, this._localization.MermaidRenderFailedFormat, detail));
         }
     }
 
     private void ShowStatus(string text)
     {
-        _statusText.Text = text;
-        _statusHost.Visibility = Visibility.Visible;
-        _snapshotImage.Visibility = Visibility.Collapsed;
-        _webView.Visibility = Visibility.Visible;
-        _webView.SetValue(UIElement.OpacityProperty, 0d);
-        _webView.IsHitTestVisible = false;
+        this._statusText.Text = text;
+        this._statusHost.Visibility = Visibility.Visible;
+        this._snapshotImage.Visibility = Visibility.Collapsed;
+        this._webView.Visibility = Visibility.Visible;
+        this._webView.SetValue(UIElement.OpacityProperty, 0d);
+        this._webView.IsHitTestVisible = false;
     }
 
     private async Task FreezePreviewAsync()
     {
         try
         {
-            if (_isDisposed || _webView.CoreWebView2 is null)
+            if (this._isDisposed || this._webView.CoreWebView2 is null)
             {
                 return;
             }
 
-            using var stream = new MemoryStream();
-            await _webView.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream);
+            using MemoryStream stream = new();
+            await this._webView.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream);
             stream.Position = 0;
 
-            var image = new BitmapImage();
+            BitmapImage image = new();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.StreamSource = stream;
             image.EndInit();
             image.Freeze();
 
-            _hasTerminalState = true;
-            StopBootstrapTimer();
-            _snapshotImage.Source = image;
-            _snapshotImage.Visibility = Visibility.Visible;
-            _statusHost.Visibility = Visibility.Collapsed;
-            _webView.Visibility = Visibility.Hidden;
-            DisposeWebView();
-            ApplyMeasuredHeight(Math.Max(120, image.Height));
+            this._hasTerminalState = true;
+            this.StopBootstrapTimer();
+            this._snapshotImage.Source = image;
+            this._snapshotImage.Visibility = Visibility.Visible;
+            this._statusHost.Visibility = Visibility.Collapsed;
+            this._webView.Visibility = Visibility.Hidden;
+            this.DisposeWebView();
+            this.ApplyMeasuredHeight(Math.Max(120, image.Height));
         }
         catch (Exception ex)
         {
-            if (!IsLoaded && !_isDisposed)
+            if (!this.IsLoaded && !this._isDisposed)
             {
-                _snapshotRequested = false;
+                this._snapshotRequested = false;
                 return;
             }
 
             Trace.WriteLine(ex);
-            Fail(_localization.MermaidFreezeFailed);
+            this.Fail(this._localization.MermaidFreezeFailed);
         }
     }
 
     private void DisposeWebView()
     {
-        if (_isDisposed)
+        if (this._isDisposed)
         {
             return;
         }
 
-        _isDisposed = true;
-        StopBootstrapTimer();
-        if (_webView.CoreWebView2 is not null)
+        this._isDisposed = true;
+        this.StopBootstrapTimer();
+        if (this._webView.CoreWebView2 is not null)
         {
-            _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
-            _webView.CoreWebView2.NavigationCompleted -= OnNavigationCompleted;
+            this._webView.CoreWebView2.WebMessageReceived -= this.OnWebMessageReceived;
+            this._webView.CoreWebView2.NavigationCompleted -= this.OnNavigationCompleted;
         }
 
-        _webView.Dispose();
+        this._webView.Dispose();
     }
 
     private void OnBootstrapTimerTick(object? sender, EventArgs e)
     {
-        if (_hasTerminalState || _renderReady || _snapshotImage.Source is not null)
+        if (this._hasTerminalState || this._renderReady || this._snapshotImage.Source is not null)
         {
-            StopBootstrapTimer();
+            this.StopBootstrapTimer();
             return;
         }
 
-        Fail(_localization.MermaidLoadTimeout);
+        this.Fail(this._localization.MermaidLoadTimeout);
     }
 
     private void ResetBootstrapTimer()
     {
-        if (_hasTerminalState || _renderReady || _snapshotImage.Source is not null)
+        if (this._hasTerminalState || this._renderReady || this._snapshotImage.Source is not null)
         {
             return;
         }
 
-        _bootstrapTimer.Stop();
-        _bootstrapTimer.Start();
+        this._bootstrapTimer.Stop();
+        this._bootstrapTimer.Start();
     }
 
     private void StopBootstrapTimer()
     {
-        _bootstrapTimer.Stop();
+        this._bootstrapTimer.Stop();
     }
 
     private void Fail(string text)
     {
-        _hasTerminalState = true;
-        ShowStatus(text);
-        DisposeWebView();
+        this._hasTerminalState = true;
+        this.ShowStatus(text);
+        this.DisposeWebView();
     }
 
     private void ApplyMeasuredHeight(double height)
     {
-        Height = height;
-        if (!_isDisposed)
+        this.Height = height;
+        if (!this._isDisposed)
         {
-            _webView.Height = height;
+            this._webView.Height = height;
         }
 
-        InvalidateMeasure();
-        InvalidateArrange();
-        UpdateLayout();
+        this.InvalidateMeasure();
+        this.InvalidateArrange();
+        this.UpdateLayout();
 
-        var parent = Parent as FrameworkElement;
+        FrameworkElement? parent = this.Parent as FrameworkElement;
         while (parent is not null)
         {
             parent.InvalidateMeasure();
@@ -334,8 +336,8 @@ internal sealed class MermaidWebViewPreview : Grid
 
     private static string BuildPreviewUri(string code)
     {
-        var bytes = Encoding.UTF8.GetBytes(code ?? string.Empty);
-        var encoded = Convert.ToBase64String(bytes)
+        byte[] bytes = Encoding.UTF8.GetBytes(code ?? string.Empty);
+        string encoded = Convert.ToBase64String(bytes)
             .TrimEnd('=')
             .Replace('+', '-')
             .Replace('/', '_');
@@ -601,16 +603,16 @@ internal sealed class MermaidWebViewPreview : Grid
 
     private static string EnsureLocalAssets()
     {
-        var assetsFolder = Path.Combine(
+        string assetsFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "CodexVsix",
             "WebView2Assets");
-        Directory.CreateDirectory(assetsFolder);
+        _ = Directory.CreateDirectory(assetsFolder);
 
-        var mermaidBundlePath = Path.Combine(assetsFolder, MermaidAssetFileName);
+        string mermaidBundlePath = Path.Combine(assetsFolder, MermaidAssetFileName);
         WriteIfDifferent(mermaidBundlePath, MermaidBundle.Value);
 
-        var mermaidHostPath = Path.Combine(assetsFolder, MermaidHostFileName);
+        string mermaidHostPath = Path.Combine(assetsFolder, MermaidHostFileName);
         WriteIfDifferent(mermaidHostPath, MermaidHostHtml.Value);
 
         return assetsFolder;
@@ -620,7 +622,7 @@ internal sealed class MermaidWebViewPreview : Grid
     {
         if (File.Exists(path))
         {
-            var existing = File.ReadAllText(path);
+            string existing = File.ReadAllText(path);
             if (string.Equals(existing, content, StringComparison.Ordinal))
             {
                 return;
@@ -632,14 +634,14 @@ internal sealed class MermaidWebViewPreview : Grid
 
     private static string LoadMermaidBundle()
     {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(MermaidBundleResourceName);
+        using Stream? stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(MermaidBundleResourceName);
         if (stream is null)
         {
-            var localization = new LocalizationService();
+            LocalizationService localization = new();
             throw new InvalidOperationException(string.Format(localization.Culture, localization.MermaidBundleNotFoundFormat, MermaidBundleResourceName));
         }
 
-        using var reader = new StreamReader(stream);
+        using StreamReader reader = new(stream);
         return reader.ReadToEnd();
     }
 }

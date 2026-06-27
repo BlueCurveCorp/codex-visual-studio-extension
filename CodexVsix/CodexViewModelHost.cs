@@ -1,5 +1,6 @@
-using Microsoft.VisualStudio.Shell;
 using CodexVsix.ViewModels;
+
+using Microsoft.VisualStudio.Shell;
 
 namespace CodexVsix;
 

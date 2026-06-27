@@ -14,7 +14,7 @@ public sealed class UserInputQuestionViewModel
 
     public bool AcceptsText { get; set; }
 
-    public ObservableCollection<SelectionOption> Options { get; } = new();
+    public ObservableCollection<SelectionOption> Options { get; } = [];
 
     public string? SelectedOptionValue { get; set; }
 
@@ -24,12 +24,12 @@ public sealed class UserInputQuestionViewModel
     {
         get
         {
-            if (AcceptsText)
+            if (this.AcceptsText)
             {
-                return string.IsNullOrWhiteSpace(AnswerText) ? null : AnswerText.Trim();
+                return string.IsNullOrWhiteSpace(this.AnswerText) ? null : this.AnswerText.Trim();
             }
 
-            return string.IsNullOrWhiteSpace(SelectedOptionValue) ? null : SelectedOptionValue;
+            return string.IsNullOrWhiteSpace(this.SelectedOptionValue) ? null : this.SelectedOptionValue;
         }
     }
 }

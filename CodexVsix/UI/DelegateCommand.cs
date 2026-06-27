@@ -10,21 +10,21 @@ public sealed class DelegateCommand : ICommand
 
     public DelegateCommand(Action execute, Func<bool>? canExecute = null)
     {
-        _execute = _ => execute();
-        _canExecute = canExecute is null ? null : _ => canExecute();
+        this._execute = _ => execute();
+        this._canExecute = canExecute is null ? null : _ => canExecute();
     }
 
     public DelegateCommand(Action<object?> execute, Func<object?, bool>? canExecute = null)
     {
-        _execute = execute;
-        _canExecute = canExecute;
+        this._execute = execute;
+        this._canExecute = canExecute;
     }
 
     public event EventHandler? CanExecuteChanged;
 
-    public bool CanExecute(object? parameter) => _canExecute?.Invoke(parameter) ?? true;
+    public bool CanExecute(object? parameter) => this._canExecute?.Invoke(parameter) ?? true;
 
-    public void Execute(object? parameter) => _execute(parameter);
+    public void Execute(object? parameter) => this._execute(parameter);
 
     public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }

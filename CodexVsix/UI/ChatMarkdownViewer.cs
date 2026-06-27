@@ -2,7 +2,6 @@ using System;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -40,37 +39,37 @@ public sealed class ChatMarkdownViewer : RichTextBox
 
     public ChatMarkdownViewer()
     {
-        IsReadOnly = true;
-        IsUndoEnabled = false;
-        IsDocumentEnabled = true;
-        Background = Brushes.Transparent;
-        BorderBrush = Brushes.Transparent;
-        BorderThickness = new Thickness(0);
-        Padding = new Thickness(0);
-        Margin = new Thickness(0);
-        AcceptsReturn = true;
-        VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
-        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        this.IsReadOnly = true;
+        this.IsUndoEnabled = false;
+        this.IsDocumentEnabled = true;
+        this.Background = Brushes.Transparent;
+        this.BorderBrush = Brushes.Transparent;
+        this.BorderThickness = new Thickness(0);
+        this.Padding = new Thickness(0);
+        this.Margin = new Thickness(0);
+        this.AcceptsReturn = true;
+        this.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        this.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         ContextMenuService.SetIsEnabled(this, true);
-        IsVisibleChanged += OnIsVisibleChanged;
+        IsVisibleChanged += this.OnIsVisibleChanged;
     }
 
     public string MarkdownText
     {
-        get => (string)GetValue(MarkdownTextProperty);
-        set => SetValue(MarkdownTextProperty, value);
+        get => (string)this.GetValue(MarkdownTextProperty);
+        set => this.SetValue(MarkdownTextProperty, value);
     }
 
     public ICommand? LinkCommand
     {
-        get => (ICommand?)GetValue(LinkCommandProperty);
-        set => SetValue(LinkCommandProperty, value);
+        get => (ICommand?)this.GetValue(LinkCommandProperty);
+        set => this.SetValue(LinkCommandProperty, value);
     }
 
     public string WorkspaceRoot
     {
-        get => (string)GetValue(WorkspaceRootProperty);
-        set => SetValue(WorkspaceRootProperty, value);
+        get => (string)this.GetValue(WorkspaceRootProperty);
+        set => this.SetValue(WorkspaceRootProperty, value);
     }
 
     private static void OnMarkdownTextChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -95,7 +94,7 @@ public sealed class ChatMarkdownViewer : RichTextBox
     {
         base.OnPropertyChanged(e);
 
-        if (_isRenderingDocument)
+        if (this._isRenderingDocument)
         {
             return;
         }
@@ -103,15 +102,15 @@ public sealed class ChatMarkdownViewer : RichTextBox
         if (e.Property == ForegroundProperty)
         {
             // Rebuild the FlowDocument so markdown brushes follow VS theme/foreground updates.
-            RequestRender();
+            this.RequestRender();
         }
     }
 
     private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
-        if (IsVisible && _pendingRender)
+        if (this.IsVisible && this._pendingRender)
         {
-            RenderDocument();
+            this.RenderDocument();
         }
     }
 
@@ -122,63 +121,63 @@ public sealed class ChatMarkdownViewer : RichTextBox
             return base.MeasureOverride(constraint);
         }
 
-        var naturalWidth = CalculateNaturalWidth(constraint.Width);
-        var targetWidth = Math.Max(MinimumNaturalWidth, Math.Min(constraint.Width, naturalWidth));
-        var measured = base.MeasureOverride(new Size(targetWidth, constraint.Height));
+        double naturalWidth = this.CalculateNaturalWidth(constraint.Width);
+        double targetWidth = Math.Max(MinimumNaturalWidth, Math.Min(constraint.Width, naturalWidth));
+        Size measured = base.MeasureOverride(new Size(targetWidth, constraint.Height));
 
         return new Size(targetWidth, measured.Height);
     }
 
     private void RequestRender()
     {
-        _pendingRender = true;
-        if (IsVisible)
+        this._pendingRender = true;
+        if (this.IsVisible)
         {
-            RenderDocument();
+            this.RenderDocument();
         }
     }
 
     private void RenderDocument()
     {
-        var markdown = MarkdownText ?? string.Empty;
-        var workspaceRoot = WorkspaceRoot ?? string.Empty;
-        if (!_pendingRender
-            && string.Equals(_renderedMarkdownText, markdown, StringComparison.Ordinal)
-            && string.Equals(_renderedWorkspaceRoot, workspaceRoot, StringComparison.Ordinal)
-            && ReferenceEquals(_renderedLinkCommand, LinkCommand)
-            && ReferenceEquals(_renderedForeground, Foreground))
+        string markdown = this.MarkdownText ?? string.Empty;
+        string workspaceRoot = this.WorkspaceRoot ?? string.Empty;
+        if (!this._pendingRender
+            && string.Equals(this._renderedMarkdownText, markdown, StringComparison.Ordinal)
+            && string.Equals(this._renderedWorkspaceRoot, workspaceRoot, StringComparison.Ordinal)
+            && ReferenceEquals(this._renderedLinkCommand, this.LinkCommand)
+            && ReferenceEquals(this._renderedForeground, this.Foreground))
         {
             return;
         }
 
-        if (!IsVisible)
+        if (!this.IsVisible)
         {
-            _pendingRender = true;
+            this._pendingRender = true;
             return;
         }
 
-        _isRenderingDocument = true;
+        this._isRenderingDocument = true;
         try
         {
-            Document = MarkdownRenderer.CreateDocument(
+            this.Document = MarkdownRenderer.CreateDocument(
                 markdown,
-                Foreground,
-                new MarkdownRenderOptions(LinkCommand, workspaceRoot));
-            _renderedMarkdownText = markdown;
-            _renderedWorkspaceRoot = workspaceRoot;
-            _renderedLinkCommand = LinkCommand;
-            _renderedForeground = Foreground;
-            _pendingRender = false;
+                this.Foreground,
+                new MarkdownRenderOptions(this.LinkCommand, workspaceRoot));
+            this._renderedMarkdownText = markdown;
+            this._renderedWorkspaceRoot = workspaceRoot;
+            this._renderedLinkCommand = this.LinkCommand;
+            this._renderedForeground = this.Foreground;
+            this._pendingRender = false;
         }
         finally
         {
-            _isRenderingDocument = false;
+            this._isRenderingDocument = false;
         }
     }
 
     private double CalculateNaturalWidth(double maxWidth)
     {
-        var markdown = MarkdownText ?? string.Empty;
+        string markdown = this.MarkdownText ?? string.Empty;
         if (string.IsNullOrWhiteSpace(markdown))
         {
             return MinimumNaturalWidth;
@@ -189,17 +188,17 @@ public sealed class ChatMarkdownViewer : RichTextBox
             return maxWidth;
         }
 
-        var maxLineWidth = 0d;
-        var lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-        foreach (var rawLine in lines)
+        double maxLineWidth = 0d;
+        string[] lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        foreach (string? rawLine in lines)
         {
-            var line = rawLine.Trim();
+            string line = rawLine.Trim();
             if (line.Length == 0)
             {
                 continue;
             }
 
-            maxLineWidth = Math.Max(maxLineWidth, MeasureLineWidth(line));
+            maxLineWidth = Math.Max(maxLineWidth, this.MeasureLineWidth(line));
             if (maxLineWidth + NaturalWidthPadding >= maxWidth)
             {
                 return maxWidth;
@@ -216,15 +215,15 @@ public sealed class ChatMarkdownViewer : RichTextBox
 
     private double MeasureLineWidth(string line)
     {
-        var typeface = new Typeface(FontFamily, FontStyle, FontWeight, FontStretch);
-        var pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        var formattedText = new FormattedText(
+        Typeface typeface = new(this.FontFamily, this.FontStyle, this.FontWeight, this.FontStretch);
+        double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        FormattedText formattedText = new(
             line,
             CultureInfo.CurrentUICulture,
-            FlowDirection,
+            this.FlowDirection,
             typeface,
-            FontSize,
-            Foreground,
+            this.FontSize,
+            this.Foreground,
             pixelsPerDip);
 
         return formattedText.WidthIncludingTrailingWhitespace;

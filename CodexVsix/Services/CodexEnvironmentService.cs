@@ -6,7 +6,9 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+
 using CodexVsix.Models;
+
 using Newtonsoft.Json.Linq;
 
 namespace CodexVsix.Services;
@@ -17,18 +19,18 @@ public sealed class CodexEnvironmentService
 
     public async Task<CodexEnvironmentStatus> InspectAsync(CodexExtensionSettings settings, CancellationToken cancellationToken)
     {
-        var localization = new LocalizationService(settings.LanguageOverride);
-        var configuredExecutablePath = CodexExecutableResolver.NormalizeConfiguredExecutablePath(settings.CodexExecutablePath);
-        var status = new CodexEnvironmentStatus
+        LocalizationService localization = new(settings.LanguageOverride);
+        string configuredExecutablePath = CodexExecutableResolver.NormalizeConfiguredExecutablePath(settings.CodexExecutablePath);
+        CodexEnvironmentStatus status = new()
         {
             Stage = CodexSetupStage.Checking,
             ConfiguredExecutablePath = configuredExecutablePath,
-            AuthFilePath = GetAuthFilePath(settings.EnvironmentVariables)
+            AuthFilePath = this.GetAuthFilePath(settings.EnvironmentVariables)
         };
 
         try
         {
-            var resolvedExecutablePath = CodexExecutableResolver.ResolveExecutableLocation(configuredExecutablePath, settings.EnvironmentVariables);
+            string resolvedExecutablePath = CodexExecutableResolver.ResolveExecutableLocation(configuredExecutablePath, settings.EnvironmentVariables);
             if (string.IsNullOrWhiteSpace(resolvedExecutablePath))
             {
                 status.Stage = CodexSetupStage.MissingExecutable;
@@ -37,7 +39,7 @@ public sealed class CodexEnvironmentService
 
             status.ResolvedExecutablePath = resolvedExecutablePath;
 
-            var version = await TryGetVersionAsync(resolvedExecutablePath, localization, cancellationToken).ConfigureAwait(false);
+            (bool Success, string Detail) version = await TryGetVersionAsync(resolvedExecutablePath, localization, cancellationToken).ConfigureAwait(false);
             if (!version.Success)
             {
                 status.Stage = CodexSetupStage.Error;
@@ -46,7 +48,7 @@ public sealed class CodexEnvironmentService
             }
 
             status.Version = version.Detail;
-            var appServer = await TryValidateAppServerAsync(resolvedExecutablePath, localization, cancellationToken).ConfigureAwait(false);
+            (bool Success, string Detail) appServer = await TryValidateAppServerAsync(resolvedExecutablePath, localization, cancellationToken).ConfigureAwait(false);
             if (!appServer.Success)
             {
                 status.Stage = CodexSetupStage.Error;
@@ -54,10 +56,10 @@ public sealed class CodexEnvironmentService
                 return status;
             }
 
-            var authFileInspection = InspectAuthFile(status.AuthFilePath);
-            var appServerAuth = await TryReadAppServerAuthStateAsync(resolvedExecutablePath, settings, cancellationToken).ConfigureAwait(false);
-            var providerInspection = InspectConfiguredProvider(settings);
-            var hasManagedLogin = string.Equals(appServerAuth.AccountType, "chatgpt", StringComparison.OrdinalIgnoreCase);
+            AuthFileInspection authFileInspection = InspectAuthFile(status.AuthFilePath);
+            AppServerAuthInspection appServerAuth = await TryReadAppServerAuthStateAsync(resolvedExecutablePath, settings, cancellationToken).ConfigureAwait(false);
+            ConfigProviderInspection providerInspection = InspectConfiguredProvider(settings);
+            bool hasManagedLogin = string.Equals(appServerAuth.AccountType, "chatgpt", StringComparison.OrdinalIgnoreCase);
 
             status.HasAuthFile = authFileInspection.HasUsableAuthFile;
             status.HasApiKey = HasOpenAiApiKey(settings.EnvironmentVariables)
@@ -70,8 +72,8 @@ public sealed class CodexEnvironmentService
                 : providerInspection.RequiresOpenaiAuthFallback;
             status.AuthenticationLabel = BuildAuthenticationLabel(localization, appServerAuth, providerInspection, hasManagedLogin);
 
-            var hasOpenaiAuthentication = status.HasApiKey || status.HasAuthFile || hasManagedLogin;
-            var hasProviderAuthentication = providerInspection.IsReady;
+            bool hasOpenaiAuthentication = status.HasApiKey || status.HasAuthFile || hasManagedLogin;
+            bool hasProviderAuthentication = providerInspection.IsReady;
 
             status.Stage = status.RequiresOpenaiAuth
                 ? (hasOpenaiAuthentication ? CodexSetupStage.Ready : CodexSetupStage.MissingAuthentication)
@@ -96,7 +98,7 @@ public sealed class CodexEnvironmentService
 
         if (IsPowerShellScript(executablePath))
         {
-            Process.Start(new ProcessStartInfo
+            _ = Process.Start(new ProcessStartInfo
             {
                 FileName = ResolvePowerShellHost(),
                 Arguments = "-NoExit -ExecutionPolicy Bypass -File " + QuoteArgument(executablePath) + " login",
@@ -107,13 +109,13 @@ public sealed class CodexEnvironmentService
 
         if (Environment.OSVersion.Platform == PlatformID.Win32NT)
         {
-            var commandShell = Environment.GetEnvironmentVariable("ComSpec");
+            string commandShell = Environment.GetEnvironmentVariable("ComSpec");
             if (string.IsNullOrWhiteSpace(commandShell))
             {
                 commandShell = "cmd.exe";
             }
 
-            Process.Start(new ProcessStartInfo
+            _ = Process.Start(new ProcessStartInfo
             {
                 FileName = commandShell,
                 Arguments = "/k \"" + QuoteForCommandShell(executablePath) + " login\"",
@@ -122,7 +124,7 @@ public sealed class CodexEnvironmentService
             return;
         }
 
-        Process.Start(new ProcessStartInfo
+        _ = Process.Start(new ProcessStartInfo
         {
             FileName = executablePath,
             Arguments = "login",
@@ -132,8 +134,8 @@ public sealed class CodexEnvironmentService
 
     public void DeleteAuthFile(string? authFilePath = null)
     {
-        var path = string.IsNullOrWhiteSpace(authFilePath)
-            ? GetAuthFilePath()
+        string path = string.IsNullOrWhiteSpace(authFilePath)
+            ? this.GetAuthFilePath()
             : authFilePath!;
 
         if (!File.Exists(path))
@@ -178,19 +180,19 @@ public sealed class CodexEnvironmentService
 
     private static async Task<(bool Success, string Detail)> TryGetVersionAsync(string executablePath, LocalizationService localization, CancellationToken cancellationToken)
     {
-        var probe = await RunProbeAsync(executablePath, "--version", localization.SetupErrorSummary, cancellationToken).ConfigureAwait(false);
+        (bool Success, string Detail) probe = await RunProbeAsync(executablePath, "--version", localization.SetupErrorSummary, cancellationToken).ConfigureAwait(false);
         if (!probe.Success)
         {
             return probe;
         }
 
-        var versionText = FirstNonEmptyLine(probe.Detail);
+        string versionText = FirstNonEmptyLine(probe.Detail);
         return (true, string.IsNullOrWhiteSpace(versionText) ? localization.CodexDetectedLabel : versionText);
     }
 
     private static async Task<(bool Success, string Detail)> TryValidateAppServerAsync(string executablePath, LocalizationService localization, CancellationToken cancellationToken)
     {
-        var probe = await RunProbeAsync(
+        (bool Success, string Detail) probe = await RunProbeAsync(
             executablePath,
             "app-server --help",
             localization.AppServerValidationFailed,
@@ -206,7 +208,7 @@ public sealed class CodexEnvironmentService
 
     private static async Task<(bool Success, string Detail)> RunProbeAsync(string executablePath, string arguments, string fallbackError, CancellationToken cancellationToken)
     {
-        using var process = new Process
+        using Process process = new()
         {
             StartInfo = CreateProbeStartInfo(executablePath, arguments)
         };
@@ -223,9 +225,9 @@ public sealed class CodexEnvironmentService
             return (false, ex.Message);
         }
 
-        var outputTask = process.StandardOutput.ReadToEndAsync();
-        var errorTask = process.StandardError.ReadToEndAsync();
-        var exited = await WaitForExitAsync(process, 5000, cancellationToken).ConfigureAwait(false);
+        Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        bool exited = await WaitForExitAsync(process, 5000, cancellationToken).ConfigureAwait(false);
 
         if (!exited)
         {
@@ -233,12 +235,12 @@ public sealed class CodexEnvironmentService
             return (false, fallbackError);
         }
 
-        var output = await outputTask.ConfigureAwait(false);
-        var errorText = await errorTask.ConfigureAwait(false);
+        string output = await outputTask.ConfigureAwait(false);
+        string errorText = await errorTask.ConfigureAwait(false);
 
         if (process.ExitCode != 0)
         {
-            var error = string.IsNullOrWhiteSpace(errorText) ? output : errorText;
+            string error = string.IsNullOrWhiteSpace(errorText) ? output : errorText;
             return (false, string.IsNullOrWhiteSpace(error) ? fallbackError : error.Trim());
         }
 
@@ -247,7 +249,7 @@ public sealed class CodexEnvironmentService
 
     private static async Task<AppServerAuthInspection> TryReadAppServerAuthStateAsync(string executablePath, CodexExtensionSettings settings, CancellationToken cancellationToken)
     {
-        using var process = new Process
+        using Process process = new()
         {
             StartInfo = CreateServerProbeStartInfo(executablePath, settings)
         };
@@ -268,7 +270,7 @@ public sealed class CodexEnvironmentService
 
         try
         {
-            using var writer = new StreamWriter(process.StandardInput.BaseStream, new UTF8Encoding(false), 1024, true)
+            using StreamWriter writer = new(process.StandardInput.BaseStream, new UTF8Encoding(false), 1024, true)
             {
                 AutoFlush = true,
                 NewLine = "\n"
@@ -285,7 +287,7 @@ public sealed class CodexEnvironmentService
                 }
             }).ConfigureAwait(false);
 
-            var initializeResponse = await ReadJsonRpcResponseAsync(process.StandardOutput, 1, cancellationToken).ConfigureAwait(false);
+            JObject? initializeResponse = await ReadJsonRpcResponseAsync(process.StandardOutput, 1, cancellationToken).ConfigureAwait(false);
             if (initializeResponse is null || initializeResponse["error"] is not null)
             {
                 return AppServerAuthInspection.Empty;
@@ -304,14 +306,13 @@ public sealed class CodexEnvironmentService
                 @params = new { refreshToken = false }
             }).ConfigureAwait(false);
 
-            var accountResponse = await ReadJsonRpcResponseAsync(process.StandardOutput, 2, cancellationToken).ConfigureAwait(false);
-            var result = accountResponse?["result"] as JObject;
-            if (result is null)
+            JObject? accountResponse = await ReadJsonRpcResponseAsync(process.StandardOutput, 2, cancellationToken).ConfigureAwait(false);
+            if (accountResponse?["result"] is not JObject result)
             {
                 return AppServerAuthInspection.Empty;
             }
 
-            var account = result["account"] as JObject;
+            JObject? account = result["account"] as JObject;
             return new AppServerAuthInspection(
                 success: true,
                 requiresOpenaiAuth: result["requiresOpenaiAuth"]?.Value<bool>() ?? true,
@@ -330,17 +331,17 @@ public sealed class CodexEnvironmentService
 
     private static async Task WriteJsonRpcMessageAsync(StreamWriter writer, object payload)
     {
-        var json = JObject.FromObject(payload).ToString(Newtonsoft.Json.Formatting.None);
+        string json = JObject.FromObject(payload).ToString(Newtonsoft.Json.Formatting.None);
         await writer.WriteLineAsync(json).ConfigureAwait(false);
         await writer.FlushAsync().ConfigureAwait(false);
     }
 
     private static async Task<JObject?> ReadJsonRpcResponseAsync(StreamReader reader, int requestId, CancellationToken cancellationToken)
     {
-        var timeout = TimeSpan.FromSeconds(5);
+        TimeSpan timeout = TimeSpan.FromSeconds(5);
         while (true)
         {
-            var line = await ReadLineWithTimeoutAsync(reader, timeout, cancellationToken).ConfigureAwait(false);
+            string? line = await ReadLineWithTimeoutAsync(reader, timeout, cancellationToken).ConfigureAwait(false);
             if (line is null)
             {
                 return null;
@@ -370,9 +371,9 @@ public sealed class CodexEnvironmentService
 
     private static async Task<string?> ReadLineWithTimeoutAsync(StreamReader reader, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var readTask = reader.ReadLineAsync();
-        var timeoutTask = Task.Delay(timeout, cancellationToken);
-        var completedTask = await Task.WhenAny(readTask, timeoutTask).ConfigureAwait(false);
+        Task<string> readTask = reader.ReadLineAsync();
+        Task timeoutTask = Task.Delay(timeout, cancellationToken);
+        Task completedTask = await Task.WhenAny(readTask, timeoutTask).ConfigureAwait(false);
         if (completedTask != readTask)
         {
             return null;
@@ -409,7 +410,7 @@ public sealed class CodexEnvironmentService
             };
         }
 
-        var commandShell = Environment.GetEnvironmentVariable("ComSpec");
+        string commandShell = Environment.GetEnvironmentVariable("ComSpec");
         if (string.IsNullOrWhiteSpace(commandShell))
         {
             commandShell = "cmd.exe";
@@ -428,8 +429,8 @@ public sealed class CodexEnvironmentService
 
     private static ProcessStartInfo CreateServerProbeStartInfo(string executablePath, CodexExtensionSettings settings)
     {
-        var arguments = BuildServerProbeArguments(settings);
-        var workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        string arguments = BuildServerProbeArguments(settings);
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
         if (IsPowerShellScript(executablePath))
         {
             return new ProcessStartInfo
@@ -464,7 +465,7 @@ public sealed class CodexEnvironmentService
             };
         }
 
-        var commandShell = Environment.GetEnvironmentVariable("ComSpec");
+        string commandShell = Environment.GetEnvironmentVariable("ComSpec");
         if (string.IsNullOrWhiteSpace(commandShell))
         {
             commandShell = "cmd.exe";
@@ -487,7 +488,7 @@ public sealed class CodexEnvironmentService
 
     private static string BuildServerProbeArguments(CodexExtensionSettings settings)
     {
-        var args = new List<string> { "app-server", "--listen", "stdio://" };
+        List<string> args = ["app-server", "--listen", "stdio://"];
 
         if (!HasProfileArgument(settings.AdditionalArguments) && !string.IsNullOrWhiteSpace(settings.Profile))
         {
@@ -497,7 +498,7 @@ public sealed class CodexEnvironmentService
 
         if (!string.IsNullOrWhiteSpace(settings.RawTomlOverrides))
         {
-            foreach (var line in settings.RawTomlOverrides.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            foreach (string? line in settings.RawTomlOverrides.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 args.Add("-c");
                 args.Add(line.Trim());
@@ -506,7 +507,7 @@ public sealed class CodexEnvironmentService
 
         if (!string.IsNullOrWhiteSpace(settings.AdditionalArguments))
         {
-            foreach (var token in SplitArguments(settings.AdditionalArguments))
+            foreach (string token in SplitArguments(settings.AdditionalArguments))
             {
                 args.Add(token);
             }
@@ -530,12 +531,12 @@ public sealed class CodexEnvironmentService
 
     private static ConfigProviderInspection InspectConfiguredProvider(CodexExtensionSettings settings)
     {
-        var parsedConfig = ParseEffectiveConfig(settings);
-        var selectedProfile = ResolveSelectedProfile(settings, parsedConfig.DefaultProfile);
-        var providerId = string.Empty;
+        ParsedCodexConfig parsedConfig = ParseEffectiveConfig(settings);
+        string selectedProfile = ResolveSelectedProfile(settings, parsedConfig.DefaultProfile);
+        string providerId = string.Empty;
 
         if (!string.IsNullOrWhiteSpace(selectedProfile)
-            && parsedConfig.Profiles.TryGetValue(selectedProfile, out var profileConfig)
+            && parsedConfig.Profiles.TryGetValue(selectedProfile, out ParsedProfileConfig? profileConfig)
             && !string.IsNullOrWhiteSpace(profileConfig.ModelProvider))
         {
             providerId = profileConfig.ModelProvider;
@@ -551,12 +552,12 @@ public sealed class CodexEnvironmentService
             return new ConfigProviderInspection(string.Empty, selectedProfile, hasActiveProvider: false, hasExplicitCredentialRequirement: false, hasConfiguredCredentials: true);
         }
 
-        if (!parsedConfig.Providers.TryGetValue(providerId, out var providerConfig))
+        if (!parsedConfig.Providers.TryGetValue(providerId, out ParsedProviderConfig? providerConfig))
         {
             return new ConfigProviderInspection(providerId, selectedProfile, hasActiveProvider: true, hasExplicitCredentialRequirement: false, hasConfiguredCredentials: true);
         }
 
-        var hasExplicitCredentialRequirement =
+        bool hasExplicitCredentialRequirement =
             !string.IsNullOrWhiteSpace(providerConfig.EnvKey)
             || !string.IsNullOrWhiteSpace(providerConfig.ApiKey)
             || providerConfig.HasAuthSection
@@ -567,11 +568,11 @@ public sealed class CodexEnvironmentService
             return new ConfigProviderInspection(providerId, selectedProfile, hasActiveProvider: true, hasExplicitCredentialRequirement: false, hasConfiguredCredentials: true);
         }
 
-        var envRequirementsSatisfied =
+        bool envRequirementsSatisfied =
             (string.IsNullOrWhiteSpace(providerConfig.EnvKey) || IsEnvironmentVariableConfigured(providerConfig.EnvKey, settings.EnvironmentVariables))
             && providerConfig.EnvHeaderVariables.All(envVar => IsEnvironmentVariableConfigured(envVar, settings.EnvironmentVariables));
 
-        var hasConfiguredCredentials = envRequirementsSatisfied
+        bool hasConfiguredCredentials = envRequirementsSatisfied
             && (providerConfig.HasAuthSection
                 || !string.IsNullOrWhiteSpace(providerConfig.ApiKey)
                 || !string.IsNullOrWhiteSpace(providerConfig.EnvKey)
@@ -582,8 +583,8 @@ public sealed class CodexEnvironmentService
 
     private static ParsedCodexConfig ParseEffectiveConfig(CodexExtensionSettings settings)
     {
-        var parsedConfig = new ParsedCodexConfig();
-        var configPath = Path.Combine(CodexEnvironmentPathHelper.GetCodexHomeDirectory(settings.EnvironmentVariables), "config.toml");
+        ParsedCodexConfig parsedConfig = new();
+        string configPath = Path.Combine(CodexEnvironmentPathHelper.GetCodexHomeDirectory(settings.EnvironmentVariables), "config.toml");
         if (File.Exists(configPath))
         {
             ParseTomlInto(parsedConfig, File.ReadAllLines(configPath));
@@ -599,10 +600,10 @@ public sealed class CodexEnvironmentService
 
     private static void ParseTomlInto(ParsedCodexConfig config, IEnumerable<string> lines)
     {
-        var currentSection = Array.Empty<string>();
-        foreach (var rawLine in lines)
+        string[] currentSection = Array.Empty<string>();
+        foreach (string rawLine in lines)
         {
-            var line = StripTomlComment(rawLine).Trim();
+            string line = StripTomlComment(rawLine).Trim();
             if (string.IsNullOrWhiteSpace(line))
             {
                 continue;
@@ -614,14 +615,14 @@ public sealed class CodexEnvironmentService
                 continue;
             }
 
-            var separatorIndex = FindTomlAssignmentSeparator(line);
+            int separatorIndex = FindTomlAssignmentSeparator(line);
             if (separatorIndex <= 0)
             {
                 continue;
             }
 
-            var key = line.Substring(0, separatorIndex).Trim();
-            var value = line.Substring(separatorIndex + 1).Trim();
+            string key = line.Substring(0, separatorIndex).Trim();
+            string value = line.Substring(separatorIndex + 1).Trim();
             ApplyTomlAssignment(config, currentSection, key, value);
         }
     }
@@ -644,7 +645,7 @@ public sealed class CodexEnvironmentService
 
         if (currentSection.Count == 2 && string.Equals(currentSection[0], "profiles", StringComparison.OrdinalIgnoreCase))
         {
-            var profile = config.GetOrCreateProfile(currentSection[1]);
+            ParsedProfileConfig profile = config.GetOrCreateProfile(currentSection[1]);
             if (string.Equals(key, "model_provider", StringComparison.OrdinalIgnoreCase))
             {
                 profile.ModelProvider = UnquoteTomlString(value);
@@ -658,7 +659,7 @@ public sealed class CodexEnvironmentService
             return;
         }
 
-        var provider = config.GetOrCreateProvider(currentSection[1]);
+        ParsedProviderConfig provider = config.GetOrCreateProvider(currentSection[1]);
         if (currentSection.Count == 2)
         {
             if (string.Equals(key, "env_key", StringComparison.OrdinalIgnoreCase))
@@ -671,11 +672,11 @@ public sealed class CodexEnvironmentService
             }
             else if (string.Equals(key, "env_http_headers", StringComparison.OrdinalIgnoreCase))
             {
-                foreach (var envVar in ParseInlineTableValues(value))
+                foreach (string envVar in ParseInlineTableValues(value))
                 {
                     if (!string.IsNullOrWhiteSpace(envVar))
                     {
-                        provider.EnvHeaderVariables.Add(envVar);
+                        _ = provider.EnvHeaderVariables.Add(envVar);
                     }
                 }
             }
@@ -695,22 +696,22 @@ public sealed class CodexEnvironmentService
 
     private static IEnumerable<string> ParseInlineTableValues(string value)
     {
-        var trimmed = value.Trim();
+        string trimmed = value.Trim();
         if (!trimmed.StartsWith("{", StringComparison.Ordinal) || !trimmed.EndsWith("}", StringComparison.Ordinal))
         {
             yield break;
         }
 
-        foreach (var entry in SplitTopLevelCommaList(trimmed.Substring(1, trimmed.Length - 2)))
+        foreach (string entry in SplitTopLevelCommaList(trimmed.Substring(1, trimmed.Length - 2)))
         {
-            var separatorIndex = FindTomlAssignmentSeparator(entry);
+            int separatorIndex = FindTomlAssignmentSeparator(entry);
             if (separatorIndex <= 0)
             {
                 continue;
             }
 
-            var entryValue = entry.Substring(separatorIndex + 1).Trim();
-            var envVar = UnquoteTomlString(entryValue);
+            string entryValue = entry.Substring(separatorIndex + 1).Trim();
+            string envVar = UnquoteTomlString(entryValue);
             if (!string.IsNullOrWhiteSpace(envVar))
             {
                 yield return envVar;
@@ -720,37 +721,37 @@ public sealed class CodexEnvironmentService
 
     private static IEnumerable<string> SplitTopLevelCommaList(string text)
     {
-        var current = new StringBuilder();
-        var inDoubleQuotes = false;
-        var inSingleQuotes = false;
-        var braceDepth = 0;
+        StringBuilder current = new();
+        bool inDoubleQuotes = false;
+        bool inSingleQuotes = false;
+        int braceDepth = 0;
 
-        foreach (var ch in text)
+        foreach (char ch in text)
         {
             switch (ch)
             {
                 case '"' when !inSingleQuotes:
                     inDoubleQuotes = !inDoubleQuotes;
-                    current.Append(ch);
+                    _ = current.Append(ch);
                     continue;
                 case '\'' when !inDoubleQuotes:
                     inSingleQuotes = !inSingleQuotes;
-                    current.Append(ch);
+                    _ = current.Append(ch);
                     continue;
                 case '{' when !inDoubleQuotes && !inSingleQuotes:
                     braceDepth++;
-                    current.Append(ch);
+                    _ = current.Append(ch);
                     continue;
                 case '}' when !inDoubleQuotes && !inSingleQuotes && braceDepth > 0:
                     braceDepth--;
-                    current.Append(ch);
+                    _ = current.Append(ch);
                     continue;
                 case ',' when !inDoubleQuotes && !inSingleQuotes && braceDepth == 0:
                     yield return current.ToString().Trim();
-                    current.Clear();
+                    _ = current.Clear();
                     continue;
                 default:
-                    current.Append(ch);
+                    _ = current.Append(ch);
                     continue;
             }
         }
@@ -763,40 +764,40 @@ public sealed class CodexEnvironmentService
 
     private static IEnumerable<string> SplitTomlPath(string text)
     {
-        var current = new StringBuilder();
-        var inDoubleQuotes = false;
-        var inSingleQuotes = false;
+        StringBuilder current = new();
+        bool inDoubleQuotes = false;
+        bool inSingleQuotes = false;
 
-        foreach (var ch in text)
+        foreach (char ch in text)
         {
             switch (ch)
             {
                 case '"' when !inSingleQuotes:
                     inDoubleQuotes = !inDoubleQuotes;
-                    current.Append(ch);
+                    _ = current.Append(ch);
                     continue;
                 case '\'' when !inDoubleQuotes:
                     inSingleQuotes = !inSingleQuotes;
-                    current.Append(ch);
+                    _ = current.Append(ch);
                     continue;
                 case '.' when !inDoubleQuotes && !inSingleQuotes:
-                    var segment = current.ToString().Trim();
+                    string segment = current.ToString().Trim();
                     if (!string.IsNullOrWhiteSpace(segment))
                     {
                         yield return UnquoteTomlString(segment);
                     }
 
-                    current.Clear();
+                    _ = current.Clear();
                     continue;
                 default:
-                    current.Append(ch);
+                    _ = current.Append(ch);
                     continue;
             }
         }
 
         if (current.Length > 0)
         {
-            var segment = current.ToString().Trim();
+            string segment = current.ToString().Trim();
             if (!string.IsNullOrWhiteSpace(segment))
             {
                 yield return UnquoteTomlString(segment);
@@ -806,13 +807,13 @@ public sealed class CodexEnvironmentService
 
     private static int FindTomlAssignmentSeparator(string text)
     {
-        var inDoubleQuotes = false;
-        var inSingleQuotes = false;
-        var braceDepth = 0;
+        bool inDoubleQuotes = false;
+        bool inSingleQuotes = false;
+        int braceDepth = 0;
 
-        for (var index = 0; index < text.Length; index++)
+        for (int index = 0; index < text.Length; index++)
         {
-            var ch = text[index];
+            char ch = text[index];
             if (ch == '"' && !inSingleQuotes)
             {
                 inDoubleQuotes = !inDoubleQuotes;
@@ -858,11 +859,11 @@ public sealed class CodexEnvironmentService
             return string.Empty;
         }
 
-        var inDoubleQuotes = false;
-        var inSingleQuotes = false;
-        for (var index = 0; index < line.Length; index++)
+        bool inDoubleQuotes = false;
+        bool inSingleQuotes = false;
+        for (int index = 0; index < line.Length; index++)
         {
-            var ch = line[index];
+            char ch = line[index];
             if (ch == '"' && !inSingleQuotes)
             {
                 inDoubleQuotes = !inDoubleQuotes;
@@ -886,7 +887,7 @@ public sealed class CodexEnvironmentService
 
     private static string UnquoteTomlString(string value)
     {
-        var trimmed = (value ?? string.Empty).Trim();
+        string trimmed = (value ?? string.Empty).Trim();
         if (trimmed.Length >= 2)
         {
             if ((trimmed[0] == '"' && trimmed[trimmed.Length - 1] == '"')
@@ -911,8 +912,8 @@ public sealed class CodexEnvironmentService
 
     private static string GetProfileArgument(string? commandLine)
     {
-        var awaitingProfileValue = false;
-        foreach (var token in SplitArguments(commandLine ?? string.Empty))
+        bool awaitingProfileValue = false;
+        foreach (string token in SplitArguments(commandLine ?? string.Empty))
         {
             if (awaitingProfileValue)
             {
@@ -942,10 +943,10 @@ public sealed class CodexEnvironmentService
 
     private static IEnumerable<string> SplitArguments(string commandLine)
     {
-        var current = new StringBuilder();
-        var inQuotes = false;
+        StringBuilder current = new();
+        bool inQuotes = false;
 
-        foreach (var ch in commandLine)
+        foreach (char ch in commandLine)
         {
             if (ch == '"')
             {
@@ -958,13 +959,13 @@ public sealed class CodexEnvironmentService
                 if (current.Length > 0)
                 {
                     yield return current.ToString();
-                    current.Clear();
+                    _ = current.Clear();
                 }
 
                 continue;
             }
 
-            current.Append(ch);
+            _ = current.Append(ch);
         }
 
         if (current.Length > 0)
@@ -1005,7 +1006,7 @@ public sealed class CodexEnvironmentService
 
     private static void ApplyEnvironmentVariables(ProcessStartInfo psi, string? environmentVariables)
     {
-        foreach (var entry in CodexEnvironmentPathHelper.ParseEnvironmentVariables(environmentVariables))
+        foreach (KeyValuePair<string, string> entry in CodexEnvironmentPathHelper.ParseEnvironmentVariables(environmentVariables))
         {
             psi.EnvironmentVariables[entry.Key] = entry.Value;
         }
@@ -1027,16 +1028,16 @@ public sealed class CodexEnvironmentService
 
     private static bool HasOpenAiApiKey(string environmentVariables)
     {
-        foreach (var line in (environmentVariables ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        foreach (string? line in (environmentVariables ?? string.Empty).Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            var separatorIndex = line.IndexOf('=');
+            int separatorIndex = line.IndexOf('=');
             if (separatorIndex <= 0)
             {
                 continue;
             }
 
-            var key = line.Substring(0, separatorIndex).Trim();
-            var value = line.Substring(separatorIndex + 1).Trim();
+            string key = line.Substring(0, separatorIndex).Trim();
+            string value = line.Substring(separatorIndex + 1).Trim();
             if (string.Equals(key, "OPENAI_API_KEY", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(value))
             {
                 return true;
@@ -1055,14 +1056,14 @@ public sealed class CodexEnvironmentService
 
         try
         {
-            var document = JObject.Parse(File.ReadAllText(authFilePath));
-            var embeddedApiKey = document["OPENAI_API_KEY"]?.Value<string>();
-            var tokens = document["tokens"] as JObject;
-            var accessToken = tokens?["access_token"]?.Value<string>();
-            var refreshToken = tokens?["refresh_token"]?.Value<string>();
-            var idToken = tokens?["id_token"]?.Value<string>();
-            var hasEmbeddedApiKey = !string.IsNullOrWhiteSpace(embeddedApiKey);
-            var hasUsableAuthFile = hasEmbeddedApiKey
+            JObject document = JObject.Parse(File.ReadAllText(authFilePath));
+            string? embeddedApiKey = document["OPENAI_API_KEY"]?.Value<string>();
+            JObject? tokens = document["tokens"] as JObject;
+            string? accessToken = tokens?["access_token"]?.Value<string>();
+            string? refreshToken = tokens?["refresh_token"]?.Value<string>();
+            string? idToken = tokens?["id_token"]?.Value<string>();
+            bool hasEmbeddedApiKey = !string.IsNullOrWhiteSpace(embeddedApiKey);
+            bool hasUsableAuthFile = hasEmbeddedApiKey
                 || !string.IsNullOrWhiteSpace(accessToken)
                 || !string.IsNullOrWhiteSpace(refreshToken);
 
@@ -1071,10 +1072,10 @@ public sealed class CodexEnvironmentService
                 return new AuthFileInspection(hasUsableAuthFile, hasEmbeddedApiKey, string.Empty);
             }
 
-            var payload = ParseJwtPayload(idToken!);
-            var accountEmail = FirstNonEmptyString(
-                payload.TryGetValue("email", out var email) ? email?.ToString() : null,
-                payload.TryGetValue("preferred_username", out var preferredUsername) ? preferredUsername?.ToString() : null,
+            JObject payload = ParseJwtPayload(idToken!);
+            string accountEmail = FirstNonEmptyString(
+                payload.TryGetValue("email", out JToken? email) ? email?.ToString() : null,
+                payload.TryGetValue("preferred_username", out JToken? preferredUsername) ? preferredUsername?.ToString() : null,
                 tokens?["account_id"]?.ToString());
 
             return new AuthFileInspection(hasUsableAuthFile, hasEmbeddedApiKey, accountEmail);
@@ -1092,21 +1093,21 @@ public sealed class CodexEnvironmentService
 
     private static JObject ParseJwtPayload(string token)
     {
-        var parts = token.Split('.');
+        string[] parts = token.Split('.');
         if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1]))
         {
-            return new JObject();
+            return [];
         }
 
-        var payloadBytes = DecodeBase64Url(parts[1]);
-        var payloadJson = Encoding.UTF8.GetString(payloadBytes);
+        byte[] payloadBytes = DecodeBase64Url(parts[1]);
+        string payloadJson = Encoding.UTF8.GetString(payloadBytes);
         return JObject.Parse(payloadJson);
     }
 
     private static byte[] DecodeBase64Url(string value)
     {
-        var normalized = value.Replace('-', '+').Replace('_', '/');
-        var padding = 4 - (normalized.Length % 4);
+        string normalized = value.Replace('-', '+').Replace('_', '/');
+        int padding = 4 - (normalized.Length % 4);
         if (padding is > 0 and < 4)
         {
             normalized = normalized.PadRight(normalized.Length + padding, '=');
@@ -1127,7 +1128,7 @@ public sealed class CodexEnvironmentService
             return false;
         }
 
-        var extension = Path.GetExtension(executablePath);
+        string extension = Path.GetExtension(executablePath);
         return string.IsNullOrEmpty(extension)
             || extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".bat", StringComparison.OrdinalIgnoreCase);
@@ -1146,7 +1147,7 @@ public sealed class CodexEnvironmentService
             if (!process.HasExited)
             {
                 process.Kill();
-                process.WaitForExit(1000);
+                _ = process.WaitForExit(1000);
             }
         }
         catch
@@ -1156,8 +1157,8 @@ public sealed class CodexEnvironmentService
 
     private static string ResolvePowerShellHost()
     {
-        var systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
-        var windowsPowerShell = Path.Combine(systemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+        string systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        string windowsPowerShell = Path.Combine(systemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
         return File.Exists(windowsPowerShell)
             ? windowsPowerShell
             : "powershell.exe";
@@ -1174,9 +1175,9 @@ public sealed class CodexEnvironmentService
 
         public AuthFileInspection(bool hasUsableAuthFile, bool hasEmbeddedApiKey, string accountEmail)
         {
-            HasUsableAuthFile = hasUsableAuthFile;
-            HasEmbeddedApiKey = hasEmbeddedApiKey;
-            AccountEmail = accountEmail ?? string.Empty;
+            this.HasUsableAuthFile = hasUsableAuthFile;
+            this.HasEmbeddedApiKey = hasEmbeddedApiKey;
+            this.AccountEmail = accountEmail ?? string.Empty;
         }
 
         public bool HasUsableAuthFile { get; }
@@ -1192,10 +1193,10 @@ public sealed class CodexEnvironmentService
 
         public AppServerAuthInspection(bool success, bool requiresOpenaiAuth, string accountType, string accountEmail)
         {
-            Success = success;
-            RequiresOpenaiAuth = requiresOpenaiAuth;
-            AccountType = accountType ?? string.Empty;
-            AccountEmail = accountEmail ?? string.Empty;
+            this.Success = success;
+            this.RequiresOpenaiAuth = requiresOpenaiAuth;
+            this.AccountType = accountType ?? string.Empty;
+            this.AccountEmail = accountEmail ?? string.Empty;
         }
 
         public bool Success { get; }
@@ -1211,11 +1212,11 @@ public sealed class CodexEnvironmentService
     {
         public ConfigProviderInspection(string providerId, string selectedProfile, bool hasActiveProvider, bool hasExplicitCredentialRequirement, bool hasConfiguredCredentials)
         {
-            ProviderId = providerId ?? string.Empty;
-            SelectedProfile = selectedProfile ?? string.Empty;
-            HasActiveProvider = hasActiveProvider;
-            HasExplicitCredentialRequirement = hasExplicitCredentialRequirement;
-            HasConfiguredCredentials = hasConfiguredCredentials;
+            this.ProviderId = providerId ?? string.Empty;
+            this.SelectedProfile = selectedProfile ?? string.Empty;
+            this.HasActiveProvider = hasActiveProvider;
+            this.HasExplicitCredentialRequirement = hasExplicitCredentialRequirement;
+            this.HasConfiguredCredentials = hasConfiguredCredentials;
         }
 
         public string ProviderId { get; }
@@ -1228,9 +1229,9 @@ public sealed class CodexEnvironmentService
 
         public bool HasConfiguredCredentials { get; }
 
-        public bool IsReady => !HasExplicitCredentialRequirement || HasConfiguredCredentials;
+        public bool IsReady => !this.HasExplicitCredentialRequirement || this.HasConfiguredCredentials;
 
-        public bool RequiresOpenaiAuthFallback => !HasActiveProvider || string.Equals(ProviderId, "openai", StringComparison.OrdinalIgnoreCase);
+        public bool RequiresOpenaiAuthFallback => !this.HasActiveProvider || string.Equals(this.ProviderId, "openai", StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class ParsedCodexConfig
@@ -1245,10 +1246,10 @@ public sealed class CodexEnvironmentService
 
         public ParsedProfileConfig GetOrCreateProfile(string id)
         {
-            if (!Profiles.TryGetValue(id, out var profile))
+            if (!this.Profiles.TryGetValue(id, out ParsedProfileConfig? profile))
             {
                 profile = new ParsedProfileConfig();
-                Profiles[id] = profile;
+                this.Profiles[id] = profile;
             }
 
             return profile;
@@ -1256,10 +1257,10 @@ public sealed class CodexEnvironmentService
 
         public ParsedProviderConfig GetOrCreateProvider(string id)
         {
-            if (!Providers.TryGetValue(id, out var provider))
+            if (!this.Providers.TryGetValue(id, out ParsedProviderConfig? provider))
             {
                 provider = new ParsedProviderConfig();
-                Providers[id] = provider;
+                this.Providers[id] = provider;
             }
 
             return provider;

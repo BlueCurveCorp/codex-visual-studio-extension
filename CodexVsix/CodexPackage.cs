@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+
 using Microsoft.VisualStudio.Shell;
 
 namespace CodexVsix;
@@ -16,7 +17,7 @@ public sealed class CodexPackage : AsyncPackage
 {
     protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
     {
-        await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
+        await this.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
         CodexToolWindowManager.Initialize(this);
         await ShowCodexToolWindowCommand.InitializeAsync(this);
     }

@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+
 using CodexVsix.Services;
 using CodexVsix.ViewModels;
+
 using Microsoft.VisualStudio.Shell;
 
 namespace CodexVsix;
@@ -13,35 +15,36 @@ public partial class CodexSettingsToolWindowControl : UserControl
 
     public CodexSettingsToolWindowControl()
     {
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
         try
         {
-            InitializeComponent();
+            this.InitializeComponent();
         }
         catch (System.Exception ex)
         {
-            ActivityLog.TryLogError("CodexVsix", new LocalizationService().SettingsToolWindowXamlLoadLogMessage + System.Environment.NewLine + ex);
+            _ = ActivityLog.TryLogError("CodexVsix", new LocalizationService().SettingsToolWindowXamlLoadLogMessage + System.Environment.NewLine + ex);
             throw;
         }
 
         try
         {
-            _viewModel = CodexViewModelHost.GetOrCreate();
+            this._viewModel = CodexViewModelHost.GetOrCreate();
         }
         catch (System.Exception ex)
         {
-            ActivityLog.TryLogError("CodexVsix", new LocalizationService().SettingsToolWindowViewModelCreateLogMessage + System.Environment.NewLine + ex);
+            _ = ActivityLog.TryLogError("CodexVsix", new LocalizationService().SettingsToolWindowViewModelCreateLogMessage + System.Environment.NewLine + ex);
             throw;
         }
 
-        DataContext = _viewModel;
-        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
-        Unloaded += OnUnloaded;
+        this.DataContext = this._viewModel;
+        this._viewModel.PropertyChanged += this.OnViewModelPropertyChanged;
+        Unloaded += this.OnUnloaded;
     }
 
     private void OnLoaded(object sender, System.Windows.RoutedEventArgs e)
     {
-        RefreshSectionContent();
-        UpdateSectionVisibility();
+        this.RefreshSectionContent();
+        this.UpdateSectionVisibility();
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -50,38 +53,38 @@ public partial class CodexSettingsToolWindowControl : UserControl
             || string.Equals(e.PropertyName, nameof(CodexToolWindowViewModel.SelectedSettingsSection), System.StringComparison.Ordinal)
             || string.Equals(e.PropertyName, nameof(CodexToolWindowViewModel.Localization), System.StringComparison.Ordinal))
         {
-            RefreshSectionContent();
-            UpdateSectionVisibility();
+            this.RefreshSectionContent();
+            this.UpdateSectionVisibility();
         }
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
-        Unloaded -= OnUnloaded;
+        this._viewModel.PropertyChanged -= this.OnViewModelPropertyChanged;
+        Unloaded -= this.OnUnloaded;
     }
 
     private void RefreshSectionContent()
     {
-        if (_viewModel.IsMcpSectionSelected || _viewModel.IsSkillsSectionSelected)
+        if (this._viewModel.IsMcpSectionSelected || this._viewModel.IsSkillsSectionSelected)
         {
-            if (_viewModel.RefreshIntegrationsCommand.CanExecute(null))
+            if (this._viewModel.RefreshIntegrationsCommand.CanExecute(null))
             {
-                _viewModel.RefreshIntegrationsCommand.Execute(null);
+                this._viewModel.RefreshIntegrationsCommand.Execute(null);
             }
         }
-        else if (_viewModel.RefreshCodexStatusCommand.CanExecute(null))
+        else if (this._viewModel.RefreshCodexStatusCommand.CanExecute(null))
         {
-            _viewModel.RefreshCodexStatusCommand.Execute(null);
+            this._viewModel.RefreshCodexStatusCommand.Execute(null);
         }
     }
 
     private void UpdateSectionVisibility()
     {
-        SettingsPlaceholderText.Visibility = _viewModel.IsSettingsDetailPanelVisible ? Visibility.Collapsed : Visibility.Visible;
-        AccountSectionPanel.Visibility = _viewModel.IsAccountSectionSelected ? Visibility.Visible : Visibility.Collapsed;
-        CodexSectionPanel.Visibility = _viewModel.IsCodexSectionSelected ? Visibility.Visible : Visibility.Collapsed;
-        McpSectionPanel.Visibility = _viewModel.IsMcpSectionSelected ? Visibility.Visible : Visibility.Collapsed;
-        SkillsSectionPanel.Visibility = _viewModel.IsSkillsSectionSelected ? Visibility.Visible : Visibility.Collapsed;
+        this.SettingsPlaceholderText.Visibility = this._viewModel.IsSettingsDetailPanelVisible ? Visibility.Collapsed : Visibility.Visible;
+        this.AccountSectionPanel.Visibility = this._viewModel.IsAccountSectionSelected ? Visibility.Visible : Visibility.Collapsed;
+        this.CodexSectionPanel.Visibility = this._viewModel.IsCodexSectionSelected ? Visibility.Visible : Visibility.Collapsed;
+        this.McpSectionPanel.Visibility = this._viewModel.IsMcpSectionSelected ? Visibility.Visible : Visibility.Collapsed;
+        this.SkillsSectionPanel.Visibility = this._viewModel.IsSkillsSectionSelected ? Visibility.Visible : Visibility.Collapsed;
     }
 }

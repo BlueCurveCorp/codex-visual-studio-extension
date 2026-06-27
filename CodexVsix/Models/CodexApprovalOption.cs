@@ -6,8 +6,8 @@ public sealed class CodexApprovalOption
 {
     public CodexApprovalOption(string key, JToken decision)
     {
-        Key = key;
-        Decision = decision;
+        this.Key = key;
+        this.Decision = decision;
     }
 
     public string Key { get; }
