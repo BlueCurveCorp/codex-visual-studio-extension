@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added a themed slash-command palette with click and Tab completion for conversation, review, model, permissions, IDE-context, status, skills, MCP, and app actions.
+- Added native app-server support for thread fork, compact, and permanent delete operations.
+- Added native inline reviews for uncommitted changes, base branches, commits, and custom review instructions.
+- Added completed-turn diff summaries from `turn/diff/updated` notifications.
+
+### Changed
+
+- Updated skill invocation and skill chips from the obsolete `/skill-name` form to Codex's current `$skill-name` syntax.
+- Updated thread lifecycle notification handling to the current app-server method names.
+
+### Fixed
+
+- Fixed the history Delete action so it permanently deletes a thread instead of merely archiving it.
+- Fixed selected skills being displayed as chips but silently omitted from the app-server turn input.
+- Removed handling for stale thread notification aliases that are no longer emitted by the current protocol.
+
 ## 1.2.1 - 2026-05-01
 
 ### Changed

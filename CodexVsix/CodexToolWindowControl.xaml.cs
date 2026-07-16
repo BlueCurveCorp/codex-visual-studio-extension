@@ -363,6 +363,14 @@ public partial class CodexToolWindowControl : UserControl
 
     private void OnPromptTextBoxPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Tab && this._viewModel.SlashCommandSuggestions.FirstOrDefault() is CodexSlashCommand slashCommand)
+        {
+            this._viewModel.InsertSlashCommandCommand.Execute(slashCommand);
+            this.PromptTextBox.CaretIndex = this.PromptTextBox.Text.Length;
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
         {
             this.ExecuteSendShortcut(e);

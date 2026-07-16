@@ -23,7 +23,25 @@ This extension is an independent project and is not affiliated with, endorsed by
 - Image attachment from the clipboard or file picker
 - `--image` support when calling the installed Codex runtime
 - Solution-aware `@file` search while typing
+- Codex skill invocation with `$skill-name` chips and app-server skill inputs
+- A slash-command palette with click and Tab completion
+- Native thread fork, compact, archive, delete, resume, and rename actions
+- Native inline code review through the Codex app-server review API
+- Completed-turn diff summaries rendered as expandable Markdown events
 - Session usage and rate-limit visibility in the Visual Studio UI
+
+## Slash Commands
+
+Type `/` at the start of the composer to open the command palette. Click a command or press `Tab` to complete the first match.
+
+Supported commands:
+
+- Conversation: `/new`, `/clear`, `/resume [thread-id]`, `/fork`, `/compact`, `/rename <name>`, `/archive`, `/delete`
+- Review: `/review`, `/review base <branch>`, `/review commit <sha>`, or `/review <custom instructions>`
+- Runtime controls: `/model <model-id>`, `/fast`, `/plan [prompt]`, `/permissions [value]`, `/ide`, `/status`
+- Configuration surfaces: `/skills`, `/mcp`, `/apps`
+
+Commands backed by the Codex app-server use its native thread and review methods. Commands that configure the extension update the same persisted settings used by the Visual Studio controls.
 
 ## Authentication and Provider Support
 
@@ -51,6 +69,7 @@ This means the extension does not force OpenAI login when your Codex CLI is alre
 - Image attachments depend on the installed `codex` runtime supporting `--image`.
 - Theme support uses Visual Studio theme resources so the UI works in light and dark themes.
 - UI strings remain localized through the extension's existing localization pipeline.
+- Codex skills use the current `$skill-name` syntax; `/...` is reserved for slash commands.
 
 ## Manual Future-Proofing
 

@@ -83,6 +83,7 @@ public sealed class CodexProcessService : IDisposable
         CodexExtensionSettings settings,
         IEnumerable<string> imagePaths,
         string ideContextSummary,
+        JObject? reviewTarget,
         Action<string> onOutput,
         Action<string> onError,
         Action<ChatMessage>? onEventMessage,
@@ -108,15 +109,31 @@ public sealed class CodexProcessService : IDisposable
             {
                 try
                 {
-                    JToken? turnResult = await this.StartTurnWithFallbackAsync(
-                        turnState,
-                        this._threadId!,
-                        prompt,
-                        settings,
-                        workingDirectory,
-                        imagePaths,
-                        ideContextSummary,
-                        cancellationToken).ConfigureAwait(false);
+                    JToken? turnResult;
+                    if (reviewTarget is null)
+                    {
+                        turnResult = await this.StartTurnWithFallbackAsync(
+                            turnState,
+                            this._threadId!,
+                            prompt,
+                            settings,
+                            workingDirectory,
+                            imagePaths,
+                            ideContextSummary,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        turnResult = await this.SendRequestAsync(
+                            "review/start",
+                            new JObject
+                            {
+                                ["threadId"] = this._threadId,
+                                ["target"] = reviewTarget.DeepClone(),
+                                ["delivery"] = "inline"
+                            },
+                            cancellationToken).ConfigureAwait(false);
+                    }
 
                     turnState.TurnId = turnResult?["turn"]?["id"]?.Value<string>();
                     int exitCode = await turnState.Completion.Task.ConfigureAwait(false);
@@ -387,6 +404,97 @@ public sealed class CodexProcessService : IDisposable
             },
             cancellationToken).ConfigureAwait(false);
 
+        lock (this._syncRoot)
+        {
+            if (string.Equals(this._threadId, threadId, StringComparison.Ordinal))
+            {
+                this._threadId = null;
+                this._threadConfigKey = null;
+                this._threadLoaded = false;
+            }
+        }
+    }
+
+    public async Task DeleteThreadAsync(CodexExtensionSettings settings, string threadId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            return;
+        }
+
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        _ = await this.SendRequestAsync(
+            "thread/delete",
+            new
+            {
+                threadId
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        this.ResetLoadedThread(threadId);
+    }
+
+    public async Task CompactThreadAsync(CodexExtensionSettings settings, string threadId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            throw new InvalidOperationException("A saved Codex thread is required before it can be compacted.");
+        }
+
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        _ = await this.SendRequestAsync(
+            "thread/compact/start",
+            new
+            {
+                threadId
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<string> ForkThreadAsync(CodexExtensionSettings settings, string threadId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            throw new InvalidOperationException("A saved Codex thread is required before it can be forked.");
+        }
+
+        string workingDirectory = ResolveWorkingDirectory(settings.WorkingDirectory);
+        await this.EnsureServerReadyAsync(settings, workingDirectory, cancellationToken).ConfigureAwait(false);
+        JToken? response = await this.SendRequestAsync(
+            "thread/fork",
+            new
+            {
+                threadId,
+                cwd = workingDirectory,
+                model = string.IsNullOrWhiteSpace(settings.DefaultModel) ? null : settings.DefaultModel.Trim(),
+                approvalPolicy = NormalizeApprovalPolicy(settings.ApprovalPolicy),
+                sandbox = NormalizeSandboxMode(settings.SandboxMode),
+                serviceTier = NormalizeServiceTier(settings.ServiceTier),
+                ephemeral = false,
+                excludeTurns = false
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        string? forkedThreadId = response?["thread"]?["id"]?.Value<string>();
+        if (string.IsNullOrWhiteSpace(forkedThreadId))
+        {
+            throw new InvalidOperationException("Codex did not return an id for the forked thread.");
+        }
+
+        lock (this._syncRoot)
+        {
+            this._threadId = forkedThreadId;
+            this._threadConfigKey = null;
+            this._threadLoaded = true;
+        }
+
+        return forkedThreadId!;
+    }
+
+    private void ResetLoadedThread(string threadId)
+    {
         lock (this._syncRoot)
         {
             if (string.Equals(this._threadId, threadId, StringComparison.Ordinal))
@@ -1015,6 +1123,10 @@ public sealed class CodexProcessService : IDisposable
                 this.HandleTurnPlanUpdated(parameters);
                 break;
 
+            case "turn/diff/updated":
+                this.HandleTurnDiffUpdated(parameters);
+                break;
+
             case "turn/completed":
                 this.HandleTurnCompleted(parameters);
                 break;
@@ -1040,12 +1152,13 @@ public sealed class CodexProcessService : IDisposable
                 break;
 
             case "thread/started":
-            case "thread/nameUpdated":
-            case "thread/statusChanged":
+            case "thread/archived":
+            case "thread/deleted":
+            case "thread/unarchived":
+            case "thread/compacted":
             case "thread/closed":
             case "thread/name/updated":
             case "thread/status/changed":
-            case "thread/closed/updated":
                 this.NotifyThreadCatalogChanged();
                 break;
 
@@ -1366,9 +1479,43 @@ public sealed class CodexProcessService : IDisposable
             this.PublishError(errorMessage + Environment.NewLine);
         }
 
+        ActiveTurnState? turnState;
         lock (this._syncRoot)
         {
-            this._activeTurn?.TrySetResult(string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase) ? 0 : 1);
+            turnState = this._activeTurn;
+        }
+
+        string? latestDiff = turnState?.LatestDiff;
+        if (!string.IsNullOrWhiteSpace(latestDiff))
+        {
+            turnState?.OnEventMessage?.Invoke(CreateDiffEventMessage(latestDiff!));
+        }
+
+        lock (this._syncRoot)
+        {
+            turnState?.TrySetResult(string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase) ? 0 : 1);
+        }
+    }
+
+    private void HandleTurnDiffUpdated(JToken? parameters)
+    {
+        if (!this.MatchesActiveTurn(parameters?["turnId"]?.Value<string>()))
+        {
+            return;
+        }
+
+        string? diff = parameters?["diff"]?.Value<string>();
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            return;
+        }
+
+        lock (this._syncRoot)
+        {
+            if (this._activeTurn is not null)
+            {
+                this._activeTurn.LatestDiff = diff;
+            }
         }
     }
 
@@ -3265,6 +3412,17 @@ public sealed class CodexProcessService : IDisposable
             supportsMarkdownDetail: true);
     }
 
+    private static ChatMessage CreateDiffEventMessage(string diff)
+    {
+        LocalizationService localization = new();
+        return CreateEventMessage(
+            localization.EventFileChangesTitle,
+            BuildSummary(diff, localization.EventUpdatedFiles),
+            "```diff" + Environment.NewLine + diff.Trim() + Environment.NewLine + "```",
+            detailMaxLength: null,
+            supportsMarkdownDetail: true);
+    }
+
     private static ChatMessage? CreateEventMessage(
         string title,
         string? summary,
@@ -4292,6 +4450,7 @@ public sealed class CodexProcessService : IDisposable
         public HashSet<string> StreamedItemIds { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, StringBuilder> PlanTextByItemId { get; } = new(StringComparer.Ordinal);
         public string? TurnId { get; set; }
+        public string? LatestDiff { get; set; }
         public bool HasAssistantOutput { get; set; }
         public bool InterruptRequested { get; set; }
 

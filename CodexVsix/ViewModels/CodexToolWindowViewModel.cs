@@ -38,6 +38,27 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     private const string SettingsSectionMcp = "mcp";
     private const string SettingsSectionSkills = "skills";
     private const string SettingsSectionLanguage = "language";
+    private static readonly CodexSlashCommand[] AvailableSlashCommands =
+    [
+        new("/new", "/new"),
+        new("/clear", "/clear"),
+        new("/resume", "/resume [thread-id]", acceptsArguments: true),
+        new("/fork", "/fork"),
+        new("/compact", "/compact"),
+        new("/review", "/review [instructions]", acceptsArguments: true),
+        new("/model", "/model <model-id>", acceptsArguments: true),
+        new("/fast", "/fast"),
+        new("/plan", "/plan [prompt]", acceptsArguments: true),
+        new("/permissions", "/permissions [read-only|workspace-write|danger-full-access]", acceptsArguments: true),
+        new("/ide", "/ide"),
+        new("/status", "/status"),
+        new("/skills", "/skills"),
+        new("/mcp", "/mcp"),
+        new("/apps", "/apps"),
+        new("/rename", "/rename <name>", acceptsArguments: true),
+        new("/archive", "/archive"),
+        new("/delete", "/delete")
+    ];
     private readonly ExtensionSettingsStore _settingsStore = new();
     private readonly CodexProcessService _codexProcessService = new();
     private readonly CodexEnvironmentService _codexEnvironmentService = new();
@@ -137,6 +158,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         this.RemoveSelectedImageCommand = new DelegateCommand(this.RemoveSelectedImage, () => this.SelectedImagePath is not null);
         this.RemoveAttachmentCommand = new DelegateCommand(this.RemoveAttachment);
         this.RemoveDetectedPromptSkillCommand = new DelegateCommand(this.RemoveDetectedPromptSkill);
+        this.InsertSlashCommandCommand = new DelegateCommand(this.InsertSlashCommand);
         this.InsertSelectedMentionCommand = new DelegateCommand(this.InsertSelectedMention, () => this.SelectedMention is not null);
         this.ReuseHistoryPromptCommand = new DelegateCommand(this.ReuseHistoryPrompt, () => this.SelectedHistoryPrompt is not null);
         this.NewThreadCommand = new DelegateCommand(this.StartNewThread, () => this.IsCodexReady && !this.IsStopping);
@@ -225,6 +247,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     public ObservableCollection<CodexSkillSummary> Skills { get; } = [];
     public ObservableCollection<CodexRemoteSkillSummary> RemoteSkills { get; } = [];
     public ObservableCollection<CodexSkillSummary> DetectedPromptSkills { get; } = [];
+    public ObservableCollection<CodexSlashCommand> SlashCommandSuggestions { get; } = [];
     public ObservableRangeCollection<ChatMessage> Messages { get; } = [];
     public ObservableCollection<SelectionOption> ModelOptions { get; } = [];
 
@@ -334,6 +357,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
     public DelegateCommand RemoveSelectedImageCommand { get; }
     public DelegateCommand RemoveAttachmentCommand { get; }
     public DelegateCommand RemoveDetectedPromptSkillCommand { get; }
+    public DelegateCommand InsertSlashCommandCommand { get; }
     public DelegateCommand InsertSelectedMentionCommand { get; }
     public DelegateCommand ReuseHistoryPromptCommand { get; }
     public DelegateCommand NewThreadCommand { get; }
@@ -372,6 +396,8 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         get => this._promptEditorText;
         set => RunOnUiThread(() => { Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread(); this.ApplyPromptEditorText(value); });
     }
+
+    public bool HasSlashCommandSuggestions => this.SlashCommandSuggestions.Count > 0;
 
     public string Output
     {
@@ -1180,10 +1206,26 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private async Task SendAsync()
     {
-        string promptToSend = this.BuildEffectivePrompt();
+        string editorPrompt = this._promptEditorText ?? string.Empty;
+        string promptToSend = this.BuildEffectivePrompt(editorPrompt);
         if (this.IsBusy || string.IsNullOrWhiteSpace(promptToSend))
         {
             return;
+        }
+
+        (bool Handled, string Prompt, JObject? ReviewTarget) slashCommand = await this.DispatchSlashCommandAsync(editorPrompt);
+        if (slashCommand.Handled)
+        {
+            return;
+        }
+
+        if (slashCommand.ReviewTarget is not null)
+        {
+            promptToSend = slashCommand.Prompt;
+        }
+        else if (!string.Equals(slashCommand.Prompt, editorPrompt, StringComparison.Ordinal))
+        {
+            promptToSend = this.BuildEffectivePrompt(slashCommand.Prompt);
         }
 
         if (!this.IsCodexReady)
@@ -1233,6 +1275,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
                 this.Settings,
                 this.AttachedImages.ToList(),
                 ideContextSummary,
+                slashCommand.ReviewTarget,
                 onOutput: text =>
                 {
                     if (this.IsConversationStateCurrent(conversationStateVersion))
@@ -1313,6 +1356,301 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
             this._cts?.Dispose();
             this._cts = null;
         }
+    }
+
+    private async Task<(bool Handled, string Prompt, JObject? ReviewTarget)> DispatchSlashCommandAsync(string prompt)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        string trimmed = (prompt ?? string.Empty).Trim();
+        if (!trimmed.StartsWith("/", StringComparison.Ordinal))
+        {
+            return (false, prompt ?? string.Empty, null);
+        }
+
+        int separatorIndex = trimmed.IndexOfAny(new[] { ' ', '\t', '\r', '\n' });
+        string command = (separatorIndex < 0 ? trimmed : trimmed.Substring(0, separatorIndex)).ToLowerInvariant();
+        string arguments = separatorIndex < 0 ? string.Empty : trimmed.Substring(separatorIndex + 1).Trim();
+        if (!AvailableSlashCommands.Any(item => string.Equals(item.CommandText, command, StringComparison.Ordinal)))
+        {
+            return (false, prompt ?? string.Empty, null);
+        }
+
+        try
+        {
+            switch (command)
+            {
+                case "/new":
+                case "/clear":
+                    this.ClearSlashCommandComposer();
+                    this.StartNewThread();
+                    return (true, string.Empty, null);
+
+                case "/resume":
+                    this.ClearSlashCommandComposer();
+                    if (string.IsNullOrWhiteSpace(arguments))
+                    {
+                        this.OpenHistoryPanel();
+                    }
+                    else
+                    {
+                        await this.OpenThreadAsync(arguments);
+                    }
+
+                    return (true, string.Empty, null);
+
+                case "/fork":
+                    await this.ForkCurrentThreadAsync();
+                    return (true, string.Empty, null);
+
+                case "/compact":
+                    await this.CompactCurrentThreadAsync();
+                    return (true, string.Empty, null);
+
+                case "/review":
+                    this.PlanModeEnabled = false;
+                    this.ClearSlashCommandComposer();
+                    return (false, trimmed, BuildReviewTarget(arguments));
+
+                case "/model":
+                    this.ClearSlashCommandComposer();
+                    if (string.IsNullOrWhiteSpace(arguments))
+                    {
+                        this.SelectSettingsSection(SettingsSectionCodex);
+                    }
+                    else
+                    {
+                        this.SelectedModel = arguments;
+                    }
+
+                    return (true, string.Empty, null);
+
+                case "/fast":
+                    this.ClearSlashCommandComposer();
+                    this.SelectedServiceTier = this.IsFastModeEnabled ? string.Empty : "fast";
+                    return (true, string.Empty, null);
+
+                case "/plan":
+                    this.PlanModeEnabled = true;
+                    this.ClearSlashCommandComposer();
+                    return string.IsNullOrWhiteSpace(arguments)
+                        ? (true, string.Empty, null)
+                        : (false, arguments, null);
+
+                case "/permissions":
+                    this.ClearSlashCommandComposer();
+                    this.ApplyPermissionsSlashCommand(arguments);
+                    return (true, string.Empty, null);
+
+                case "/ide":
+                    this.ClearSlashCommandComposer();
+                    this.IncludeIdeContextEnabled = !this.IncludeIdeContextEnabled;
+                    return (true, string.Empty, null);
+
+                case "/status":
+                    this.ClearSlashCommandComposer();
+                    this.AddAssistantMessage(this.BuildSlashStatusMessage());
+                    return (true, string.Empty, null);
+
+                case "/skills":
+                    this.ClearSlashCommandComposer();
+                    this.SelectSettingsSection(SettingsSectionSkills);
+                    return (true, string.Empty, null);
+
+                case "/mcp":
+                    this.ClearSlashCommandComposer();
+                    this.SelectSettingsSection(SettingsSectionMcp);
+                    return (true, string.Empty, null);
+
+                case "/apps":
+                    this.ClearSlashCommandComposer();
+                    this.SelectSettingsSection(SettingsSectionAccount);
+                    return (true, string.Empty, null);
+
+                case "/rename":
+                    await this.RenameCurrentThreadAsync(arguments);
+                    return (true, string.Empty, null);
+
+                case "/archive":
+                    await this.ArchiveCurrentThreadAsync(deletePermanently: false);
+                    return (true, string.Empty, null);
+
+                case "/delete":
+                    await this.ArchiveCurrentThreadAsync(deletePermanently: true);
+                    return (true, string.Empty, null);
+            }
+        }
+        catch (Exception ex)
+        {
+            this.ClearSlashCommandComposer();
+            this.AddAssistantMessage(this.Localization.ExecutionError + " " + ex.Message);
+            this.AppendOutput("[" + command + "] " + ex.Message + Environment.NewLine);
+            return (true, string.Empty, null);
+        }
+
+        return (false, prompt ?? string.Empty, null);
+    }
+
+    private static JObject BuildReviewTarget(string arguments)
+    {
+        string value = (arguments ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return new JObject { ["type"] = "uncommittedChanges" };
+        }
+
+        const string BasePrefix = "base ";
+        if (value.StartsWith(BasePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return new JObject
+            {
+                ["type"] = "baseBranch",
+                ["branch"] = value.Substring(BasePrefix.Length).Trim()
+            };
+        }
+
+        const string CommitPrefix = "commit ";
+        if (value.StartsWith(CommitPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return new JObject
+            {
+                ["type"] = "commit",
+                ["sha"] = value.Substring(CommitPrefix.Length).Trim()
+            };
+        }
+
+        return new JObject
+        {
+            ["type"] = "custom",
+            ["instructions"] = value
+        };
+    }
+
+    private async Task ForkCurrentThreadAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        string threadId = this.Settings.CurrentThreadId;
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            throw new InvalidOperationException("A saved Codex thread is required before it can be forked.");
+        }
+
+        this.ClearSlashCommandComposer();
+        this.IsBusy = true;
+        try
+        {
+            string forkedThreadId = await this._codexProcessService.ForkThreadAsync(this.Settings, threadId, CancellationToken.None);
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            this.Settings.CurrentThreadId = forkedThreadId;
+            this.SaveSettings();
+            await this.RefreshThreadsAsync(forkedThreadId);
+            await this.OpenThreadAsync(forkedThreadId);
+        }
+        finally
+        {
+            this.IsBusy = false;
+        }
+    }
+
+    private async Task CompactCurrentThreadAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        string threadId = this.Settings.CurrentThreadId;
+        this.ClearSlashCommandComposer();
+        this.IsBusy = true;
+        try
+        {
+            await this._codexProcessService.CompactThreadAsync(this.Settings, threadId, CancellationToken.None);
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            await this.OpenThreadAsync(threadId);
+        }
+        finally
+        {
+            this.IsBusy = false;
+        }
+    }
+
+    private async Task RenameCurrentThreadAsync(string name)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        string threadId = this.Settings.CurrentThreadId;
+        if (string.IsNullOrWhiteSpace(threadId) || string.IsNullOrWhiteSpace(name))
+        {
+            throw new InvalidOperationException("/rename requires a saved thread and a non-empty name.");
+        }
+
+        this.ClearSlashCommandComposer();
+        await this._codexProcessService.RenameThreadAsync(this.Settings, threadId, name, CancellationToken.None);
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        await this.RefreshThreadsAsync(threadId);
+    }
+
+    private async Task ArchiveCurrentThreadAsync(bool deletePermanently)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        string threadId = this.Settings.CurrentThreadId;
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            throw new InvalidOperationException("A saved Codex thread is required for this command.");
+        }
+
+        this.ClearSlashCommandComposer();
+        if (deletePermanently)
+        {
+            await this._codexProcessService.DeleteThreadAsync(this.Settings, threadId, CancellationToken.None);
+        }
+        else
+        {
+            await this._codexProcessService.ArchiveThreadAsync(this.Settings, threadId, CancellationToken.None);
+        }
+
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        this.StartNewThread();
+    }
+
+    private void ApplyPermissionsSlashCommand(string value)
+    {
+        string normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            this.SelectSettingsSection(SettingsSectionCodex);
+            return;
+        }
+
+        if (this.SandboxModeOptions.Any(option => string.Equals(option.Value, normalized, StringComparison.OrdinalIgnoreCase)))
+        {
+            this.SelectedSandboxMode = normalized;
+            return;
+        }
+
+        if (this.ApprovalPolicyOptions.Any(option => string.Equals(option.Value, normalized, StringComparison.OrdinalIgnoreCase)))
+        {
+            this.SelectedApprovalPolicy = normalized;
+            return;
+        }
+
+        throw new InvalidOperationException("Unsupported permissions value: " + value);
+    }
+
+    private string BuildSlashStatusMessage()
+    {
+        return string.Join(Environment.NewLine, new[]
+        {
+            "- model: `" + this.SelectedModel + "`",
+            "- reasoning_effort: `" + this.SelectedReasoningEffort + "`",
+            "- verbosity: `" + this.SelectedVerbosity + "`",
+            "- service_tier: `" + this.SelectedServiceTier + "`",
+            "- approval_policy: `" + this.SelectedApprovalPolicy + "`",
+            "- sandbox_mode: `" + this.SelectedSandboxMode + "`",
+            "- cwd: `" + this.Settings.WorkingDirectory + "`",
+            "- thread_id: `" + this.Settings.CurrentThreadId + "`",
+            "- ide_context: `" + this.IncludeIdeContextEnabled.ToString().ToLowerInvariant() + "`"
+        });
+    }
+
+    private void ClearSlashCommandComposer()
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+        this.PromptEditorText = string.Empty;
     }
 
     private async Task EnsureCurrentThreadHasFriendlyNameAsync(string? prompt)
@@ -3396,7 +3734,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         {
             try
             {
-                await this._codexProcessService.ArchiveThreadAsync(this.Settings, thread.ThreadId, CancellationToken.None).ConfigureAwait(false);
+                await this._codexProcessService.DeleteThreadAsync(this.Settings, thread.ThreadId, CancellationToken.None).ConfigureAwait(false);
 
                 if (string.Equals(this.Settings.CurrentThreadId, thread.ThreadId, StringComparison.Ordinal))
                 {
@@ -4154,6 +4492,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
         this.OnPropertyChanged(nameof(this.Prompt));
         this.OnPropertyChanged(nameof(this.PromptEditorText));
+        this.RefreshSlashCommandSuggestions();
         this.RefreshMentions();
         this.UpdateContextEstimate();
         this.SendCommand.RaiseCanExecuteChanged();
@@ -4178,6 +4517,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
         this.OnPropertyChanged(nameof(this.Prompt));
         this.OnPropertyChanged(nameof(this.PromptEditorText));
+        this.RefreshSlashCommandSuggestions();
         this.RefreshMentions();
         this.UpdateContextEstimate();
         this.SendCommand.RaiseCanExecuteChanged();
@@ -4219,24 +4559,29 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
     private string BuildEffectivePrompt()
     {
+        return this.BuildEffectivePrompt(this._promptEditorText);
+    }
+
+    private string BuildEffectivePrompt(string editorText)
+    {
         string skillPrefix = string.Join(
             " ",
             this.DetectedPromptSkills
                 .Where(skill => skill.IsEnabled && !string.IsNullOrWhiteSpace(skill.Name))
-                .Select(skill => "/" + skill.Name)
+                .Select(skill => "$" + skill.Name)
                 .Distinct(StringComparer.OrdinalIgnoreCase));
 
         if (string.IsNullOrWhiteSpace(skillPrefix))
         {
-            return this._promptEditorText;
+            return editorText;
         }
 
-        if (string.IsNullOrWhiteSpace(this._promptEditorText))
+        if (string.IsNullOrWhiteSpace(editorText))
         {
             return skillPrefix;
         }
 
-        return skillPrefix + " " + this._promptEditorText.TrimStart();
+        return skillPrefix + " " + editorText.TrimStart();
     }
 
     private void RemoveDetectedPromptSkill(object? parameter)
@@ -4317,7 +4662,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         HashSet<string> uniqueNames = new(StringComparer.OrdinalIgnoreCase);
         for (int index = 0; index < prompt.Length; index++)
         {
-            if (prompt[index] != '/')
+            if (prompt[index] != '$')
             {
                 continue;
             }
@@ -4362,7 +4707,7 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
 
         for (int index = 0; index < prompt.Length; index++)
         {
-            if (prompt[index] == '/'
+            if (prompt[index] == '$'
                 && (index == 0 || char.IsWhiteSpace(prompt[index - 1])))
             {
                 int start = index + 1;
@@ -4394,6 +4739,41 @@ public sealed class CodexToolWindowViewModel : INotifyPropertyChanged, IDisposab
         }
 
         return (detectedNames, preserveWhitespace ? builder.ToString() : CleanupPromptDisplayText(builder.ToString()));
+    }
+
+    private void RefreshSlashCommandSuggestions()
+    {
+        Microsoft.VisualStudio.Shell.ThreadHelper.ThrowIfNotOnUIThread();
+        string editorText = this._promptEditorText ?? string.Empty;
+        string trimmed = editorText.TrimStart();
+        this.SlashCommandSuggestions.Clear();
+
+        if (!trimmed.StartsWith("/", StringComparison.Ordinal)
+            || trimmed.IndexOfAny(new[] { '\r', '\n' }) >= 0
+            || trimmed.Any(char.IsWhiteSpace))
+        {
+            this.OnPropertyChanged(nameof(this.HasSlashCommandSuggestions));
+            return;
+        }
+
+        foreach (CodexSlashCommand command in AvailableSlashCommands.Where(command =>
+            command.CommandText.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase)))
+        {
+            this.SlashCommandSuggestions.Add(command);
+        }
+
+        this.OnPropertyChanged(nameof(this.HasSlashCommandSuggestions));
+    }
+
+    private void InsertSlashCommand(object? parameter)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+        if (parameter is not CodexSlashCommand command)
+        {
+            return;
+        }
+
+        this.PromptEditorText = command.CommandText + (command.AcceptsArguments ? " " : string.Empty);
     }
 
     private static string CleanupPromptDisplayText(string text)
